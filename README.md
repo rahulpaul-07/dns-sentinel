@@ -175,8 +175,8 @@ which defeat query-string features entirely) would both appear.
 **Prerequisites:** Python 3.10+, Node.js 18+, Google Chrome (for the extension).
 
 ```bash
-git clone https://github.com/rahulpaul-07/DNS_SENTINEL.git
-cd DNS_SENTINEL
+git clone https://github.com/rahulpaul-07/dns-sentinel.git
+cd dns-sentinel
 
 # 1) Backend
 cd backend

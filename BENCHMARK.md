@@ -113,7 +113,7 @@ data, so on the real feeds you get recall broken out by actual DGA family
 
 Trained on the bundled data, evaluated on 50,000 real domains (25,000 Alexa benign +
 25,000 DGA across 25 families from the Netlab 360 Opendata Project, via
-chrmor/DGA_domains_dataset). Reproduce with `run_real_benchmark.py`.
+chrmor/DGA_domains_dataset). Reproduce with `tools/run_real_benchmark.py`.
 
 **Cross-domain (bundled model -> real public data):**
 

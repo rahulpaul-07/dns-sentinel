@@ -10,8 +10,16 @@ a local environment running, the project layout, and the conventions we follow.
 | `backend/` | FastAPI service — ML inference, SSE streaming, SOAR actions, PDF reports |
 | `frontend/` | Vite + React SOC dashboard |
 | `extension/` | Manifest V3 Chrome extension for browser-level DNS telemetry |
-| `data/` | Training / evaluation datasets |
-| `ml_pipeline.py` | Standalone model-training pipeline |
+| `data/` | Training / evaluation datasets and sample captures |
+| `tools/` | Standalone scripts — `ml_pipeline.py`, `run_real_benchmark.py`, service demos |
+| `docs/` | Generated figures |
+| `vendor/` | Third-party components, unmodified — see [THIRD_PARTY.md](THIRD_PARTY.md) |
+
+Inside `backend/`, three modules are the source of truth for every number the
+documentation quotes: `train.py` regenerates the models and their provenance
+manifest, `evaluate.py` produces the hold-out and cross-dataset metrics, and
+`calibrate.py` selects the decision threshold against a false-positive budget.
+None of them should be edited without rerunning the others.
 
 ## Local development
 
