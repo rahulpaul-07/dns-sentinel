@@ -1,7 +1,5 @@
 """Unit tests for the adaptive RiskEngine (backend/risk_engine.py)."""
 import asyncio
-import os
-import tempfile
 
 import pytest
 
@@ -9,7 +7,14 @@ from risk_engine import RiskEngine, RiskTier
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    """Drive a coroutine to completion from a synchronous test.
+
+    asyncio.get_event_loop() no longer creates a loop implicitly on the main
+    thread -- deprecated since 3.10 and removed in 3.12 -- so it raises
+    RuntimeError on newer interpreters. asyncio.run() owns the loop for the
+    call and closes it afterwards, which works on every supported version.
+    """
+    return asyncio.run(coro)
 
 
 @pytest.fixture()

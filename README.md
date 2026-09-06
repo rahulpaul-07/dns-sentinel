@@ -1,11 +1,9 @@
 # DNSentinel — DNS Threat Detection & SOC Platform
 
-![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688?style=for-the-badge&logo=fastapi&logoColor=white)
-![React](https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=black)
-![Zeek](https://img.shields.io/badge/Zeek-Sensor-blueviolet?style=for-the-badge)
-![License](https://img.shields.io/badge/License-BSD--3--Clause-blue?style=for-the-badge)
-[![CI](https://github.com/rahulpaul-07/DNS_SENTINEL/actions/workflows/ci.yml/badge.svg)](https://github.com/rahulpaul-07/DNS_SENTINEL/actions/workflows/ci.yml)
+[![CI](https://github.com/rahulpaul-07/dns-sentinel/actions/workflows/ci.yml/badge.svg)](https://github.com/rahulpaul-07/dns-sentinel/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/rahulpaul-07/dns-sentinel/actions/workflows/codeql.yml/badge.svg)](https://github.com/rahulpaul-07/dns-sentinel/actions/workflows/codeql.yml)
+[![python](https://img.shields.io/badge/python-3.10%20%7C%203.11-blue)](backend/requirements.txt)
+[![license](https://img.shields.io/badge/license-BSD--3--Clause-lightgrey)](LICENSE)
 
 > An end-to-end pipeline that detects DNS-based threats — **DGA domains, DNS
 > tunneling, and data exfiltration** — from network tap to analyst dashboard.
@@ -33,8 +31,9 @@ built as three integrated tiers plus a network sensor:
 | **Chrome extension** | Manifest V3 | Browser-level DNS telemetry capture |
 
 > **Attribution:** the Zeek `exfil_detect` sensor is a reused open-source
-> package (BSD-3, © saiiman) integrated as the tap tier — see
-> [THIRD_PARTY.md](THIRD_PARTY.md). Everything else is original.
+> package (BSD-3, (c) saiiman), vendored unmodified under
+> `vendor/zeek-exfil-detect/` and integrated as the tap tier — see
+> [THIRD_PARTY.md](THIRD_PARTY.md). Everything outside `vendor/` is original.
 
 ---
 
@@ -107,6 +106,42 @@ Per-family recall exposes the honest frontier: **random / arithmetic / hex DGAs 
 but **dictionary DGAs = 0.67** and benign false-positives are high when trained only on the
 small bundled set — a training-data coverage gap (precision recovers to 0.96 once trained on
 representative data). Reproduce and read the full analysis in [BENCHMARK.md](BENCHMARK.md).
+
+**Operating point (threshold calibration).**
+
+A 0.5 decision threshold is a library default, not an operating point. Selecting
+it against an explicit false-positive budget instead (`backend/calibrate.py`)
+changes the picture in both directions:
+
+| Direction | Threshold | FPR | Recall | Precision | False positives |
+| --- | --- | --- | --- | --- | --- |
+| Exfil → DGA, default | 0.503 | 0.814 | 1.000 | 0.551 | 407 |
+| Exfil → DGA, 5% budget | 0.873 | 0.042 | 1.000 | 0.960 | **21** |
+| DGA → Exfil, default | 0.501 | 0.000 | 0.849 | 1.000 | 0 |
+| DGA → Exfil, 1% budget | 0.096 | 0.000 | **1.000** | 1.000 | 0 |
+
+The same detection rate for 21 false positives instead of 407, and in the other
+direction 53 recovered detections that the default threshold was discarding. The
+default was wrong in both directions, in opposite ways, which is what an
+uncalibrated cut point usually is.
+
+A 1% budget is *not* reachable in the exfil → DGA direction: the tightest
+achievable FPR is 0.020. The calibrator reports that rather than widening the
+budget to produce a number, because a threshold that cannot meet a constraint is
+a data problem, not a tuning problem.
+
+```bash
+python -m backend.calibrate --dataset data/dns_exfiltration_dataset.csv \
+    --cross backend/dga_dataset.csv --max-fpr 0.05 --write
+```
+
+**What these numbers do not show.** Every figure above is measured on curated or
+synthetic corpora, scored by the same feature extractor that was designed
+against them. They demonstrate that the pipeline is reproducible, that its
+failure modes are located, and that its operating point is chosen rather than
+inherited. They are not evidence of performance on live enterprise traffic,
+where DGA families absent from these sets and encrypted transports (DoH/DoT,
+which defeat query-string features entirely) would both appear.
 
 ---
 
@@ -237,11 +272,17 @@ Both suites run on every push and PR — see [`.github/workflows/ci.yml`](.githu
 ## Repository Layout
 
 ```
-backend/     FastAPI service, feature extractor, ML models, risk engine, SOAR, evaluate.py
+backend/     FastAPI service, feature extractor, ML ensemble, risk engine, SOAR
+             evaluate.py   reproducible hold-out / cross-dataset metrics
+             calibrate.py  threshold selection against an FPR budget
+             benchmarks/   family-stratified DGA benchmark harness
 frontend/    React + Vite SOC dashboard
 extension/   Chrome MV3 DNS telemetry capture + native-messaging host
-scripts/     Zeek exfil_detect sensor (third-party — see THIRD_PARTY.md)
-data/        Sample / bundled datasets
+data/        Bundled datasets and sample captures
+tools/       Standalone scripts (public-corpus benchmark, service demos)
+docs/        Generated figures
+vendor/      Third-party components, unmodified — see THIRD_PARTY.md
+             zeek-exfil-detect/  Zeek DNS-exfiltration sensor (BSD-3, (c) saiiman)
 ```
 
 ---

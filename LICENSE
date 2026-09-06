@@ -3,8 +3,8 @@ BSD 3-Clause License
 Copyright (c) 2026, Rahul Paul (DNSentinel platform: backend, frontend,
                                 Chrome extension, ML pipeline, integration).
 Copyright (c) 2023, saiiman  (bundled Zeek DNS-exfiltration sensor under
-                                scripts/Exfiltration/exfil_detect/ — see
-                                THIRD_PARTY.md and COPYING).
+                                vendor/zeek-exfil-detect/ - see
+                                THIRD_PARTY.md and that directory's COPYING).
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without

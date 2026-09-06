@@ -6,7 +6,7 @@ pipeline (`backend/`), the React SOC dashboard (`frontend/`), the Chrome MV3
 extension (`extension/`), and the Zeek→pipeline ingestion glue
 (`backend/ingest_zeek.py`) — is original work by the repository author.
 
-## Zeek DNS-exfiltration sensor — `scripts/Exfiltration/exfil_detect/`
+## Zeek DNS-exfiltration sensor — `vendor/zeek-exfil-detect/`
 
 - **What it is:** a Zeek (formerly Bro) network-security-monitor package that
   detects DNS-based data exfiltration using per-connection statistical
@@ -14,9 +14,10 @@ extension (`extension/`), and the Zeek→pipeline ingestion glue
   persisted historical baseline.
 - **Origin:** upstream Zeek package authored by **saiiman**, distributed under
   the BSD 3-Clause License. The original license text is preserved verbatim in
-  [`COPYING`](COPYING). The package scaffolding (`zkg.meta`, `configure`,
+  [`vendor/zeek-exfil-detect/COPYING`](vendor/zeek-exfil-detect/COPYING). The package scaffolding (`zkg.meta`, `configure`,
   `CMakeLists.txt`, `src/`, and the `btest` baselines under `testing/`) is part
-  of that upstream package.
+  of that upstream package and is vendored with it, so the whole component is
+  contained in one directory and nothing upstream sits at the repository root.
 - **How DNSentinel uses it:** as the network-tap sensor tier. Zeek emits
   exfiltration signals/logs, which `backend/ingest_zeek.py` normalizes and
   feeds into the DNSentinel feature extractor and risk engine. The integration,

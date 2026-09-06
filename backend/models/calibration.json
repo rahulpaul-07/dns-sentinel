@@ -1,0 +1,24 @@
+{
+  "generated_at": "2026-09-06T20:19:11+00:00",
+  "calibrator": "backend/calibrate.py",
+  "source": "dns_exfiltration_dataset.csv -> dga_dataset.csv (cross-dataset)",
+  "in_distribution": false,
+  "max_fpr_budget": 0.05,
+  "chosen": {
+    "threshold": 0.8733333333333333,
+    "fpr": 0.042,
+    "recall": 1.0,
+    "precision": 0.9596928982725528,
+    "false_positives": 21,
+    "false_negatives": 0
+  },
+  "default_threshold_point": {
+    "threshold": 0.5033333333333333,
+    "fpr": 0.814,
+    "recall": 1.0,
+    "precision": 0.5512679162072768,
+    "false_positives": 407,
+    "false_negatives": 0
+  },
+  "note": "Threshold selected to maximise recall subject to the stated FPR budget. Reproduce with python -m backend.calibrate."
+}
