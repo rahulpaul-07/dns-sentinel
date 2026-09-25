@@ -74,7 +74,7 @@ const Panel = () => {
             <div className="mt-auto p-4 bg-slate-800/50 rounded border border-slate-700/50">
                 <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Engine Status</h3>
                 <div className="flex items-center gap-2 text-sm text-green-400">
-                    <CheckCircle className="w-4 h-4" /> Native Bridge Active
+                    <CheckCircle className="w-4 h-4" /> Local heuristics + API scoring
                 </div>
             </div>
         </div>
