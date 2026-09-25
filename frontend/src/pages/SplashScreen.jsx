@@ -1,16 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 
 const BOOT_SEQUENCE = [
-  { text: "INITIALIZING KERNEL MODULES...", delay: 0 },
-  { text: "LOADING DNS INTERCEPTION LAYER...", delay: 300 },
-  { text: "MOUNTING SECURE MEMORY PARTITION [AES-256]...", delay: 600 },
-  { text: "CALIBRATING ENTROPY ANALYSIS ENGINE...", delay: 900 },
-  { text: "ESTABLISHING THREAT INTELLIGENCE FEED...", delay: 1200 },
-  { text: "LOADING 22-VECTOR NEURAL ENSEMBLE...", delay: 1500 },
-  { text: "BINDING SOAR ORCHESTRATION LAYER...", delay: 1800 },
-  { text: "WARMING REAL-TIME CLASSIFICATION MODEL...", delay: 2100 },
-  { text: "ALL SYSTEMS NOMINAL. LAUNCHING DNSentinel...", delay: 2500 },
+  { text: "CONNECTING TO DETECTION API...", delay: 0 },
+  { text: "LOADING 22-FEATURE EXTRACTOR...", delay: 200 },
+  { text: "LOADING RANDOM FOREST + ISOLATION FOREST...", delay: 400 },
+  { text: "APPLYING CALIBRATED DECISION THRESHOLD...", delay: 600 },
+  { text: "ATTACHING SSE TELEMETRY STREAM...", delay: 800 },
+  { text: "READY.", delay: 1000 },
 ];
+
+const LOGO_AT_MS = 1300;
+const EXIT_AT_MS = 2200;
+const FADE_MS = 400;
 
 const SplashScreen = ({ onComplete }) => {
   const [visibleLines, setVisibleLines] = useState([]);
@@ -18,31 +19,30 @@ const SplashScreen = ({ onComplete }) => {
   const [phase, setPhase] = useState('boot'); // boot | logo | exit
   const [scanLine, setScanLine] = useState(0);
 
+  const finish = useCallback(() => {
+    setPhase('exit');
+    setTimeout(onComplete, FADE_MS);
+  }, [onComplete]);
+
   useEffect(() => {
-    // Boot sequence text lines
-    BOOT_SEQUENCE.forEach((item, i) => {
-      setTimeout(() => {
-        setVisibleLines(prev => [...prev, item.text]);
-        setProgress(Math.round(((i + 1) / BOOT_SEQUENCE.length) * 100));
-      }, item.delay);
-    });
+    const timers = BOOT_SEQUENCE.map((item, i) => setTimeout(() => {
+      setVisibleLines(prev => [...prev, item.text]);
+      setProgress(Math.round(((i + 1) / BOOT_SEQUENCE.length) * 100));
+    }, item.delay));
+    timers.push(setTimeout(() => setPhase('logo'), LOGO_AT_MS));
+    timers.push(setTimeout(finish, EXIT_AT_MS));
+    const scanInterval = setInterval(() => setScanLine(prev => (prev + 1) % 100), 30);
 
-    // Transition to logo phase
-    setTimeout(() => setPhase('logo'), 3000);
-
-    // Trigger exit
-    setTimeout(() => {
-      setPhase('exit');
-      setTimeout(onComplete, 600);
-    }, 5000);
-
-    // Scan line animation
-    const scanInterval = setInterval(() => {
-      setScanLine(prev => (prev + 1) % 100);
-    }, 30);
-
-    return () => clearInterval(scanInterval);
-  }, []);
+    // Any key or click skips the intro.
+    window.addEventListener('keydown', finish, { once: true });
+    window.addEventListener('pointerdown', finish, { once: true });
+    return () => {
+      timers.forEach(clearTimeout);
+      clearInterval(scanInterval);
+      window.removeEventListener('keydown', finish);
+      window.removeEventListener('pointerdown', finish);
+    };
+  }, [finish]);
 
   return (
     <div
@@ -91,7 +91,7 @@ const SplashScreen = ({ onComplete }) => {
             <div style={{
               fontFamily: 'monospace', fontSize: '11px', letterSpacing: '0.3em',
               color: 'rgba(0,242,255,0.5)', marginBottom: '8px',
-            }}>DNSENTINEL // SECURE BOOT</div>
+            }}>DNSENTINEL // STARTING (CLICK TO SKIP)</div>
             <div style={{
               width: '60px', height: '2px',
               background: 'linear-gradient(90deg, #00f2ff, transparent)',
@@ -127,7 +127,7 @@ const SplashScreen = ({ onComplete }) => {
               fontFamily: 'monospace', fontSize: '10px', color: 'rgba(0,242,255,0.4)',
               letterSpacing: '0.2em',
             }}>
-              <span>SYSTEM INTEGRITY</span>
+              <span>LOADING</span>
               <span>{progress}%</span>
             </div>
             <div style={{

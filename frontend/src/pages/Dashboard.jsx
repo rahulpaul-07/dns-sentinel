@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { connectSSE, fetchAlerts, fetchStats, uploadDataset, getExportCsvUrl } from '../services/api';
+import {
+  connectSSE, fetchAlerts, fetchStats, fetchTraffic, fetchModelInfo, uploadDataset, analyzeQuery,
+  archiveCase, blockIP, markBenign, fetchIncidentReport,
+  getExportCsvUrl, getAuditPdfUrl, getAlertPdfUrl,
+} from '../services/api';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   AreaChart, Area, Cell, PieChart, Pie, CartesianGrid
@@ -37,9 +41,11 @@ const Dashboard = () => {
   const [selectedLog, setSelectedLog] = useState(null);
   const [manualQuery, setManualQuery] = useState("");
   const [manualIp, setManualIp] = useState("10.0.0.99");
-  const [, setManualResult] = useState(null);
+  const [manualResult, setManualResult] = useState(null);
+  const [manualError, setManualError] = useState(null);
+  const [modelInfo, setModelInfo] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [reportMarkdown, setReportMarkdown] = useState(null);
+  const [report, setReport] = useState(null); // { id, markdown }
   const [viewMode, setViewMode] = useState("Triage"); // Triage vs Topology
   const [sortConfig, setSortConfig] = useState({ key: 'timestamp', direction: 'desc' });
   const [liveClock, setLiveClock] = useState(new Date());
@@ -68,9 +74,10 @@ const Dashboard = () => {
   useEffect(() => {
     fetchAlerts().then(setAlerts).catch(console.error);
     fetchStats().then(setStats).catch(console.error);
-    fetch("/api/traffic").then(r => r.json()).then(data => setTraffic(data)).catch(console.error);
+    fetchTraffic().then(setTraffic).catch(console.error);
+    fetchModelInfo().then(setModelInfo).catch(console.error);
 
-    // Using SSE (Server-Sent Events) for a much more stable connection than WebSockets
+    // Server-Sent Events: one-way push with built-in browser reconnection.
     const sse = connectSSE(
       (data) => {
         setTraffic(prev => [data, ...prev].slice(0, 100));
@@ -96,15 +103,12 @@ const Dashboard = () => {
     e.preventDefault();
     if(!manualQuery) return;
     setIsAnalyzing(true);
+    setManualError(null);
     try {
-      const res = await fetch("/api/analyze", {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: manualQuery, source_ip: manualIp })
-      });
-      const data = await res.json();
-      setManualResult(data);
+      setManualResult(await analyzeQuery(manualQuery.trim(), manualIp.trim()));
     } catch(err) {
-      console.error(err);
+      setManualResult(null);
+      setManualError(err.message);
     } finally {
       setIsAnalyzing(false);
     }
@@ -116,12 +120,7 @@ const Dashboard = () => {
     setIsUploading(true);
     try {
       const res = await uploadDataset(file);
-      alert(res.message || "Background ingest started. Logs will appear live on dashboard.");
-
-      // Initial refresh to see any existing data
-      fetchAlerts().then(setAlerts).catch(console.error);
-      fetchStats().then(setStats).catch(console.error);
-      fetch("/api/traffic").then(r => r.json()).then(setTraffic).catch(console.error);
+      alert(res.message || "Ingest started. Results will stream into the live feed.");
     } catch (err) {
       console.error("Upload failed", err);
       alert("Upload failed: " + err.message);
@@ -132,21 +131,18 @@ const Dashboard = () => {
   };
 
   const handleArchive = async () => {
-    if(!window.confirm("ARE YOU SURE? THIS WILL PERMANENTLY CLEAR THE ACTIVE FORENSIC LEDGER. ENSURE YOU HAVE DOWNLOADED THE EXPORT FIRST.")) return;
+    if(!window.confirm("Start a new case? This permanently clears the audit ledger and all active SOAR rules. Export first if you need them.")) return;
 
     try {
-      const res = await fetch("/api/archive", { method: 'POST' });
-      await res.json();
-      // Hard refresh to ensure sync with truncated database
-      window.location.reload();
+      await archiveCase();
+      window.location.reload(); // resync every view with the empty ledger
     } catch(err) {
-      console.error(err);
+      alert("Could not clear the ledger: " + err.message);
     }
   };
 
   const exportAuditPDF = () => {
-    // Open in new tab for PDF download
-    window.open("/api/export/pdf", "_blank");
+    window.open(getAuditPdfUrl(), "_blank");
   };
 
   const exportAlertsCSV = () => {
@@ -166,16 +162,24 @@ const Dashboard = () => {
   const handleBlockAction = async (log) => {
     if(!log.db_id) return alert("Persistence sync pending...");
     try {
-      const res = await import('../services/api').then(m => m.blockIP(log.db_id));
-      alert(`[SOAR ACTION] Host ${log.source_ip} blocked. Rule ID: ${res.rule_id}`);
+      const res = await blockIP(log.db_id);
+      const messages = {
+        SUCCESS: `Block rule created for ${res.entity} (expires ${new Date(res.cooldown_end).toLocaleString()})${res.dry_run ? ' [dry-run: recorded, not enforced]' : ''}.`,
+        SKIPPED: `${log.source_ip} is already blocked.`,
+        DENIED: res.message,
+        INVALID: res.message,
+        ENFORCEMENT_FAILED: `Rule recorded, but the OS firewall command failed for ${res.entity}.`,
+      };
+      alert(messages[res.status] || JSON.stringify(res));
     } catch (err) { alert("Action failed: " + err.message); }
   };
 
   const handleBenignAction = async (log) => {
     if(!log.db_id) return alert("Persistence sync pending...");
     try {
-      await import('../services/api').then(m => m.markBenign(log.db_id));
-      alert("Feedback received. AI model updated to ignore this vector.");
+      await markBenign(log.db_id);
+      alert("Marked as a false positive. The verdict is recorded on the alert and any block on this source was lifted.");
+      setAlerts(prev => prev.filter(a => a.db_id !== log.db_id));
       setSelectedLog(null); // Close modal
     } catch (err) { alert("Action failed: " + err.message); }
   };
@@ -183,15 +187,14 @@ const Dashboard = () => {
   const handleReportAction = async (log) => {
     if(!log.db_id) return alert("Persistence sync pending...");
     try {
-      const res = await import('../services/api').then(m => m.fetchIncidentReport(log.db_id));
-      setReportMarkdown(res.markdown);
+      const res = await fetchIncidentReport(log.db_id);
+      setReport({ id: log.db_id, markdown: res.markdown });
     } catch (err) { alert("Report failed: " + err.message); }
   };
 
   const handlePDFAction = (log) => {
     if(!log.db_id) return alert("Persistence sync pending...");
-    // Direct browser download for PDF
-    window.open(`/api/alerts/${log.db_id}/pdf`, '_blank');
+    window.open(getAlertPdfUrl(log.db_id), '_blank');
   };
 
   const filteredTraffic = useMemo(() => {
@@ -237,10 +240,10 @@ const Dashboard = () => {
         <div className="flex items-center h-full" style={{animation: 'tickerScroll 40s linear infinite', whiteSpace: 'nowrap', paddingLeft: '120px'}}>
           {[
             "SYSTEM: DNSentinel Threat Intelligence Platform — All systems nominal",
-            "MODEL: 22-feature RF + Isolation Forest ensemble — held-out F1 0.99 (see MODEL_CARD)",
-            "SOAR: Adaptive thresholds active — mean+2sigma anomaly detection enabled",
-            "ENGINE: Real-time DNS exfiltration detection is active",
-            "STATUS: Live telemetry stream connected via SSE",
+            `MODEL: 22-feature Random Forest + Isolation Forest${modelInfo ? ` | calibrated threshold ${modelInfo.decision_threshold.toFixed(2)}` : ''}`,
+            "RISK: per-host mean + 2 sigma baselining escalates alert tiers",
+            `SOAR: ${modelInfo?.soar_dry_run === false ? 'enforcement LIVE' : 'dry-run (rules recorded, not enforced)'} | 24h auto-expiry`,
+            `STREAM: ${isConnected ? 'connected' : 'reconnecting'} via Server-Sent Events`,
             alerts[0] ? ("ALERT: " + (alerts[0].query || '') + " from " + (alerts[0].source_ip || '') + " [" + (alerts[0].risk_level || '') + "]") : "ALERT: Monitoring for DGA, Tunneling, and Exfiltration patterns",
             alerts[1] ? ("ALERT: " + (alerts[1].query || '') + " [" + (alerts[1].risk_level || '') + "]") : "INTEL: Behavioral baselining in progress across all hosts",
           ].map((item, i) => (
@@ -279,8 +282,8 @@ const Dashboard = () => {
 
           <div className="hidden lg:flex items-center gap-8">
              <div className="flex flex-col items-end border-r border-white/5 pr-8">
-                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Packet Stream Density</span>
-                <span className="text-2xl font-mono text-white leading-none font-bold tabular-nums">{(stats.total_requests/100).toFixed(2)}k <span className="text-xs text-slate-600 font-light ml-1">v/pts</span></span>
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Alert Rate</span>
+                <span className="text-2xl font-mono text-white leading-none font-bold tabular-nums">{stats.total_requests ? ((stats.total_alerts / stats.total_requests) * 100).toFixed(1) : '0.0'}<span className="text-xs text-slate-600 font-light ml-1">%</span></span>
              </div>
              {/* Live Clock */}
              <div className="flex flex-col items-end border-r border-white/5 pr-8">
@@ -314,9 +317,9 @@ const Dashboard = () => {
 
         {/* Core Metrics Deck */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
-           <StatusMetric label="Threat Signatures" value={stats.total_alerts} icon={<AlertTriangle size={24}/>} color="rose" />
+           <StatusMetric label="Alerts (Medium+)" value={stats.total_alerts} icon={<AlertTriangle size={24}/>} color="rose" />
            <StatusMetric label="Queries Analyzed" value={stats.total_requests} icon={<Activity size={24}/>} color="cyan" />
-           <StatusMetric label="Model F1 (held-out)" value="0.99" icon={<Zap size={24}/>} color="purple" />
+           <StatusMetric label="Decision Threshold" value={modelInfo ? modelInfo.decision_threshold.toFixed(2) : '-'} icon={<Zap size={24}/>} color="purple" />
            <StatusMetric label="Feature Vector" value="22-D" icon={<Cpu size={24}/>} color="amber" />
         </div>
 
@@ -335,9 +338,9 @@ const Dashboard = () => {
                 <div className="flex items-center justify-between mb-8 pb-3 border-b border-white/5">
                   <h2 className="text-[11px] font-bold text-slate-500 tracking-[0.3em] uppercase flex items-center gap-4">
                      <div className="pulse-dot"></div>
-                     High-Density Alerts
+                     Alert Feed
                   </h2>
-                  <div className="text-[#00f2ff] px-2 py-1 bg-[#00f2ff]/10 rounded font-mono text-[9px] font-bold border border-[#00f2ff]/20">RT_READY</div>
+                  <div className="text-[#00f2ff] px-2 py-1 bg-[#00f2ff]/10 rounded font-mono text-[9px] font-bold border border-[#00f2ff]/20">{isConnected ? 'LIVE' : 'OFFLINE'}</div>
                 </div>
 
                 <div className="flex-1 overflow-y-auto custom-scrollbar space-y-5 pr-2 scroll-smooth">
@@ -349,7 +352,7 @@ const Dashboard = () => {
                         </div>
                       ) : (
                         alerts.map((alert, idx) => (
-                          <ForensicCard key={`${alert.timestamp}-${idx}`} alert={alert} onClick={() => setSelectedLog(alert)} />
+                          <ForensicCard key={alert.db_id ?? `${alert.timestamp}-${idx}`} alert={alert} onClick={() => setSelectedLog(alert)} />
                         ))
                       )}
                    </AnimatePresence>
@@ -363,7 +366,7 @@ const Dashboard = () => {
                   <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-10 gap-6">
                     <h2 className="text-sm font-bold text-white tracking-[0.3em] uppercase flex items-center gap-4">
                       <Terminal size={22} className="text-[#00f2ff]" />
-                      Global Network Audio Stream
+                      Live DNS Query Stream
                     </h2>
 
                     <div className="flex flex-wrap gap-4 w-full md:w-auto">
@@ -404,7 +407,7 @@ const Dashboard = () => {
                         <tbody className="divide-y divide-white/[0.04]">
                           <AnimatePresence>
                             {filteredTraffic.map((row, idx) => (
-                              <CyberTableRow key={`${row.timestamp}-${idx}`} row={row} onClick={() => setSelectedLog(row)} />
+                              <CyberTableRow key={row.db_id ?? `${row.timestamp}-${idx}`} row={row} onClick={() => setSelectedLog(row)} />
                             ))}
                           </AnimatePresence>
                         </tbody>
@@ -421,12 +424,12 @@ const Dashboard = () => {
            {/* Attack Clustering (Donut) */}
            <div className="lg:col-span-3 glass-panel p-8">
               <h3 className="text-[11px] font-bold text-slate-500 tracking-[0.3em] mb-10 border-b border-white/5 pb-3 uppercase flex items-center gap-3">
-                 <Command size={16} /> Signature Density
+                 <Command size={16} /> Risk Distribution
               </h3>
               <div className="h-[250px] relative reveal-card">
                  <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
                     <span className="text-4xl font-mono font-bold text-white tracking-tighter tabular-nums">{stats.total_alerts}</span>
-                    <span className="text-[10px] font-bold text-slate-600 uppercase tracking-widest mt-1">Confirmed Hits</span>
+                    <span className="text-[10px] font-bold text-slate-600 uppercase tracking-widest mt-1">Alerts</span>
                  </div>
                  <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
@@ -443,11 +446,11 @@ const Dashboard = () => {
            <div className="lg:col-span-4 glass-panel p-8 flex flex-col group">
               <div className="absolute top-0 left-0 w-full h-[2px] bg-gradient-to-r from-transparent via-[#00f2ff]/20 to-transparent"></div>
               <h3 className="text-[11px] font-bold text-[#00f2ff] tracking-[0.3em] mb-8 border-b border-[#00f2ff]/10 pb-3 uppercase flex items-center gap-3">
-                 <Crosshair size={18} className="animate-pulse" /> Live Payload Ingress
+                 <Crosshair size={18} className="animate-pulse" /> Analyze a Query
               </h3>
               <form onSubmit={handleManualAnalysis} className="space-y-6 flex-1">
                  <div className="space-y-3">
-                    <label className="text-[10px] text-slate-600 font-bold uppercase tracking-[0.2em] flex justify-between ml-1">Payload Domain <span>[X-1]</span></label>
+                    <label className="text-[10px] text-slate-600 font-bold uppercase tracking-[0.2em] flex justify-between ml-1">Domain</label>
                     <input
                       type="text" required value={manualQuery} onChange={(e)=>setManualQuery(e.target.value)}
                       placeholder="e.g. unknown-tunnel.xyz"
@@ -455,7 +458,7 @@ const Dashboard = () => {
                     />
                  </div>
                  <div className="space-y-3">
-                    <label className="text-[10px] text-slate-600 font-bold uppercase tracking-[0.2em] flex justify-between ml-1">Target Context <span>[X-2]</span></label>
+                    <label className="text-[10px] text-slate-600 font-bold uppercase tracking-[0.2em] flex justify-between ml-1">Source IP</label>
                     <input
                       type="text" value={manualIp} onChange={(e)=>setManualIp(e.target.value)}
                       placeholder="10.0.0.x"
@@ -466,16 +469,26 @@ const Dashboard = () => {
                   type="submit" disabled={isAnalyzing}
                   className="w-full py-5 bg-gradient-to-br from-[#00f2ff]/20 to-[#8b5cf6]/20 text-[#00f2ff] border border-[#00f2ff]/30 rounded-2xl text-[12px] font-bold tracking-[0.3em] hover:from-[#00f2ff]/30 hover:to-[#8b5cf6]/30 transition-all active:scale-95 flex justify-center items-center gap-4 mt-6 shadow-2xl shadow-cyan-500/10"
                  >
-                    {isAnalyzing ? <div className="w-5 h-5 border-2 border-[#00f2ff] border-t-transparent rounded-full animate-spin"></div> : <><Cpu size={20}/> EXECUTE SCAN CORE</>}
+                    {isAnalyzing ? <div className="w-5 h-5 border-2 border-[#00f2ff] border-t-transparent rounded-full animate-spin"></div> : <><Cpu size={20}/> ANALYZE</>}
                  </button>
+                 {manualError && (
+                   <p role="alert" className="text-[11px] font-mono text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded-xl p-3">{manualError}</p>
+                 )}
+                 {manualResult && !manualError && (
+                   <button type="button" onClick={() => setSelectedLog(manualResult)}
+                     className="w-full text-left text-[11px] font-mono text-slate-300 bg-black/40 border border-white/10 rounded-xl p-3 hover:border-[#00f2ff]/40">
+                     {manualResult.query}: <span className="font-bold">{manualResult.risk_level}</span> ({manualResult.risk_score}),
+                     P(malicious) {manualResult.ml_probability}. Click for details.
+                   </button>
+                 )}
               </form>
            </div>
 
            {/* Entropy Visualizer */}
            <div className="lg:col-span-5 glass-panel p-8">
               <h3 className="text-[11px] font-bold text-slate-500 tracking-[0.3em] mb-10 border-b border-white/5 pb-3 uppercase flex justify-between items-center">
-                 Statistical Payload Density
-                 <span className="font-mono text-[#00f2ff] opacity-40">[SHAP_HIST]</span>
+                 Shannon Entropy, Last 30 Queries
+                 <span className="font-mono text-[#00f2ff] opacity-40">[BITS/CHAR]</span>
               </h3>
               <div className="h-[280px] reveal-card">
                  <ResponsiveContainer width="100%" height="100%">
@@ -514,11 +527,11 @@ const Dashboard = () => {
           />
         )}
 
-         {reportMarkdown && (
+         {report && (
           <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="fixed inset-0 z-[110] bg-black/98 backdrop-blur-3xl flex justify-center items-start overflow-y-auto p-4 sm:p-12 custom-scrollbar"
-            onClick={() => setReportMarkdown(null)}
+            onClick={() => setReport(null)}
           >
             <motion.div
               initial={{ scale: 0.95, y: 40 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 40 }}
@@ -527,14 +540,14 @@ const Dashboard = () => {
             >
                <div className="flex justify-between items-center mb-8 border-b border-white/5 pb-4">
                   <h3 className="text-xl font-bold tracking-widest text-[#00f2ff] uppercase">Incident Executive Summary</h3>
-                  <button onClick={() => setReportMarkdown(null)} className="p-2 hover:bg-white/5 rounded-full"><X size={24}/></button>
+                  <button onClick={() => setReport(null)} aria-label="Close report" className="p-2 hover:bg-white/5 rounded-full"><X size={24}/></button>
                </div>
                <div className="prose prose-invert max-w-none font-mono text-sm leading-relaxed whitespace-pre-wrap text-slate-300">
-                  {reportMarkdown}
+                  {report.markdown}
                </div>
                <div className="mt-10 flex gap-4">
-                  <button onClick={() => window.print()} className="px-6 py-3 bg-[#00f2ff]/10 text-[#00f2ff] border border-[#00f2ff]/30 rounded-xl text-[10px] font-bold tracking-widest uppercase hover:bg-[#00f2ff]/20 transition-all">Download PDF Format</button>
-                  <button onClick={() => setReportMarkdown(null)} className="px-6 py-3 bg-white/5 text-slate-400 border border-white/10 rounded-xl text-[10px] font-bold tracking-widest uppercase">Close File</button>
+                  <button onClick={() => window.open(getAlertPdfUrl(report.id), '_blank')} className="px-6 py-3 bg-[#00f2ff]/10 text-[#00f2ff] border border-[#00f2ff]/30 rounded-xl text-[10px] font-bold tracking-widest uppercase hover:bg-[#00f2ff]/20 transition-all">Download PDF</button>
+                  <button onClick={() => setReport(null)} className="px-6 py-3 bg-white/5 text-slate-400 border border-white/10 rounded-xl text-[10px] font-bold tracking-widest uppercase">Close File</button>
                </div>
             </motion.div>
           </motion.div>
