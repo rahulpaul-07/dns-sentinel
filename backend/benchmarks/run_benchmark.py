@@ -18,21 +18,13 @@ import numpy as np
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)                 # for generate_benchmark
 sys.path.insert(0, os.path.join(_HERE, ".."))  # for features
-from features import extract_features  # noqa: E402
+from features import vectorize  # noqa: E402
 from sklearn.ensemble import RandomForestClassifier  # noqa: E402
 from sklearn.model_selection import train_test_split  # noqa: E402
 from sklearn.metrics import (accuracy_score, precision_score, recall_score,  # noqa: E402
                              f1_score, roc_auc_score, confusion_matrix)
 
-FEATURE_ORDER = ["entropy","length","subdomain_length","ngram_score","frequency",
- "consonant_ratio","digit_ratio","unique_char","vowels_consonant_ratio",
- "max_continuous_numeric_len","max_continuous_alphabet_len","max_continuous_consonants_len",
- "max_continuous_same_char","upper_count","lower_count","special_count","labels","labels_max",
- "labels_average","entropy_to_length_ratio","high_entropy_flag","domain_complexity"]
-
-def vec(domain):
-    f = extract_features({"query": domain}); f["frequency"] = 1
-    return [f[k] for k in FEATURE_ORDER]
+vec = vectorize
 
 def load(path, dom="domain", lab="label", fam="family"):
     X, y, fams = [], [], []

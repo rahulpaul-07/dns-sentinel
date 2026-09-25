@@ -32,6 +32,13 @@ def _read_version() -> str:
     return "0.0.0"
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _split_csv(value: str):
     return [item.strip() for item in value.split(",") if item.strip()]
 
@@ -48,16 +55,32 @@ class Settings:
     # Threat-intel providers (optional; features degrade gracefully if unset).
     VIRUSTOTAL_API_KEY = os.getenv("VIRUSTOTAL_API_KEY", "")
     ABUSEIPDB_API_KEY = os.getenv("ABUSEIPDB_API_KEY", "")
-    GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+    OTX_API_KEY = os.getenv("OTX_API_KEY", "")
 
     REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
     REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 
-    DEBUG = os.getenv("DEBUG", "False").lower() in {"1", "true", "yes"}
+    DEBUG = _env_bool("DEBUG", False)
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
     # Upper bound on an accepted DNS query name (RFC 1035 caps FQDNs at 253).
     MAX_QUERY_LENGTH = int(os.getenv("MAX_QUERY_LENGTH", "253"))
+
+    # When set, state-changing endpoints (block/unblock, retrain, upload,
+    # archive) require a matching `X-API-Key` header. Unset = open (local dev).
+    API_KEY = os.getenv("API_KEY", "")
+
+    # SOAR enforcement is simulated unless explicitly disabled. Real enforcement
+    # shells out to iptables/netsh and edits the hosts file, so it needs root and
+    # should only ever run on a host you intend to firewall.
+    SOAR_DRY_RUN = _env_bool("SOAR_DRY_RUN", True)
+
+    # Opt-in live packet capture (requires scapy + root/admin). Off by default so
+    # the API runs anywhere, including PaaS hosts with no raw-socket access.
+    ENABLE_LIVE_CAPTURE = _env_bool("ENABLE_LIVE_CAPTURE", False)
+
+    # Reject bulk uploads above this size to keep memory bounded.
+    MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "10"))
 
 
 settings = Settings()

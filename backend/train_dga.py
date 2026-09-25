@@ -8,7 +8,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import roc_auc_score, precision_score, recall_score, f1_score
 import os
 import time
-from dga_model import DGAModel, CHAR_TO_IDX, MAX_LEN, device, VOCAB_SIZE
+from dga_model import DGAModel, CHAR_TO_IDX, MAX_LEN, MODEL_PATH, device, VOCAB_SIZE
 
 class DGADataset(Dataset):
     def __init__(self, csv_path):
@@ -59,8 +59,8 @@ def train_precise_model(csv_path, epochs=50, batch_size=32, lr=0.0005):
     patience = 15
     counter = 0
     
-    print(f"[*] Starting Precise Training Engine...")
-    print(f"[*] Target Architecture: LSTM-RNN with Feature Injection")
+    print("[*] Starting Precise Training Engine...")
+    print("[*] Target Architecture: LSTM-RNN with Feature Injection")
     
     for epoch in range(epochs):
         model.train()
@@ -108,9 +108,8 @@ def train_precise_model(csv_path, epochs=50, batch_size=32, lr=0.0005):
         
         if f1 > best_f1:
             best_f1 = f1
-            torch.save(model.state_dict(), "dga_model_precise.pt")
-            # Also overwrite the active model for the demo
-            torch.save(model.state_dict(), "dga_model.pt")
+            # dga_model.get_model() loads exactly this path at inference time.
+            torch.save(model.state_dict(), MODEL_PATH)
             print(f"  [+] Performance Checkpoint: New Best F1 Score: {f1:.4f}")
             counter = 0
         else:
@@ -123,17 +122,15 @@ def train_precise_model(csv_path, epochs=50, batch_size=32, lr=0.0005):
     print("PRECISE TRAINING SUMMARY")
     print("="*50)
     print(f"Best Validation F1: {best_f1:.4f}")
-    print(f"Model Artifact: dga_model_precise.pt")
+    print(f"Model Artifact: {MODEL_PATH}")
     print("="*50)
 
 if __name__ == "__main__":
     import sys
-    # If no argument, auto-generate dataset and train
-    if len(sys.argv) < 2:
-        if not os.path.exists("dga_dataset.csv"):
-            print("[!] dga_dataset.csv not found. Running auto-generator...")
-            import create_dataset
-            create_dataset.create_dataset()
-        train_precise_model("dga_dataset.csv")
-    else:
+    torch.manual_seed(42)
+    np.random.seed(42)
+    if len(sys.argv) > 1:
         train_precise_model(sys.argv[1])
+    else:
+        # Default: the committed DGA dataset next to this file.
+        train_precise_model(os.path.join(os.path.dirname(os.path.abspath(__file__)), "dga_dataset.csv"))

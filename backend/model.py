@@ -1,180 +1,176 @@
-import pandas as pd
-from sklearn.ensemble import RandomForestClassifier, IsolationForest
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
-import numpy as np
-import joblib
-import os
-import csv
-from features import extract_features
-from explainability import get_shap_explanation
+"""Inference layer for the DNSentinel detection ensemble.
 
-# dga_model requires torch - imported lazily so server starts even without it
-dga_model = None
+Models are loaded once and cached in memory; `reload_models()` swaps them
+atomically after a retrain. The decision threshold comes from
+models/calibration.json (written by calibrate.py) rather than a hard-coded 0.5,
+so the operating point the README documents is the one the API actually uses.
+"""
+import logging
+import os
+import threading
+
+import joblib
+import numpy as np
+import pandas as pd
+from sklearn.ensemble import IsolationForest, RandomForestClassifier
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+from sklearn.model_selection import train_test_split
+
+from calibrate import DEFAULT_THRESHOLD, load_threshold
+from explainability import get_shap_explanation, reset_explainer
+from features import FEATURE_ORDER
+
+logger = logging.getLogger("DNSentinel.Model")
+
+# The character-level DL scorer needs torch, which is an optional extra.
 try:
     import dga_model
-except ImportError:
-    pass  # torch not available; DGA deep-learning score will be skipped (dga_score = 0.0)
+except ImportError:  # torch not installed: the DL score is skipped entirely
+    dga_model = None
 
-
-
-# Paths to serialized models. Artifacts live in backend/models/ and are
-# generated reproducibly by `python -m backend.train` (they are git-ignored).
-# load_models() auto-trains them on first use if the directory is empty.
-MODELS_DIR = os.path.join(os.path.dirname(__file__), "models")
-os.makedirs(MODELS_DIR, exist_ok=True)
+# Artifacts live in backend/models/ and are generated reproducibly by
+# `python -m backend.train` (they are git-ignored). They are auto-trained on
+# first use when missing.
+MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
 RF_MODEL_PATH = os.path.join(MODELS_DIR, "dns_rf_model.joblib")
 ISO_MODEL_PATH = os.path.join(MODELS_DIR, "dns_iso_model.joblib")
+DEFAULT_DATASET = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "dns_exfiltration_dataset.csv")
+
+_lock = threading.Lock()
+_models = None          # (rf, iso) once loaded
+_threshold = None       # calibrated decision threshold
 
 
-def train_base_model():
-    # Load real Kaggle dataset to turbocharge the baseline model
-    dataset_path = os.path.join(os.path.dirname(__file__), "..", "data", "dns_exfiltration_dataset.csv")
-    print(f"[*] Bootstrapping powerful baseline model from {dataset_path}...")
-    
-    dataset = []
-    with open(dataset_path, 'r', encoding='utf-8') as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            q = row.get('domain', '')
-            if not q: continue
-            
-            log = {'query': q, 'source_ip': '0.0.0.0'}
-            feats = extract_features(log)
-            
-            dataset.append({
-                'entropy': feats['entropy'],
-                'length': feats['length'],
-                'subdomain_length': feats['subdomain_length'],
-                'ngram_score': feats['ngram_score'],
-                'frequency': 1, # Default normalized
-                'consonant_ratio': feats['consonant_ratio'],
-                'digit_ratio': feats['digit_ratio'],
-                'unique_char': feats['unique_char'],
-                'vowels_consonant_ratio': feats['vowels_consonant_ratio'],
-                'max_continuous_numeric_len': feats['max_continuous_numeric_len'],
-                'max_continuous_alphabet_len': feats['max_continuous_alphabet_len'],
-                'max_continuous_consonants_len': feats['max_continuous_consonants_len'],
-                'max_continuous_same_char': feats['max_continuous_same_char'],
-                'upper_count': feats['upper_count'],
-                'lower_count': feats['lower_count'],
-                'special_count': feats['special_count'],
-                'labels': feats['labels'],
-                'labels_max': feats['labels_max'],
-                'labels_average': feats['labels_average'],
-                'entropy_to_length_ratio': feats['entropy_to_length_ratio'],
-                'high_entropy_flag': feats['high_entropy_flag'],
-                'domain_complexity': feats['domain_complexity'],
-                'label': int(row.get('label', 0))
-            })
-            
-    df = pd.DataFrame(dataset)
-    X = df.drop(columns=['label'])
-    y = df['label']
-    
-    # 1. High-Performance Random Forest (Supervised)
-    print("[*] Training Kaggle-parity Random Forest Classifier...")
-    rf_clf = RandomForestClassifier(n_estimators=300, max_depth=30, min_samples_split=10, random_state=42)
-    rf_clf.fit(X, y)
-    joblib.dump(rf_clf, RF_MODEL_PATH)
-    
-    # 2. Isolation Forest (Unsupervised Anomaly Detection)
-    print("[*] Training Kaggle-parity Isolation Forest Anomaly Detector...")
-    iso_clf = IsolationForest(contamination=0.15, random_state=42)
-    iso_clf.fit(X)
-    joblib.dump(iso_clf, ISO_MODEL_PATH)
-    
-    return rf_clf, iso_clf
+def _train_base_models():
+    """Fit the default models on the bundled dataset (same recipe as train.py)."""
+    from train import fit_production_models, load
 
-def train_custom_model(df):
+    logger.info("No model artifacts found; training baseline models from %s", DEFAULT_DATASET)
+    X, y = load(DEFAULT_DATASET, "domain", "label")
+    rf, iso = fit_production_models(X, y)
+    os.makedirs(MODELS_DIR, exist_ok=True)
+    joblib.dump(rf, RF_MODEL_PATH)
+    joblib.dump(iso, ISO_MODEL_PATH)
+    return rf, iso
+
+
+def load_models():
+    """Return the cached (rf, iso) pair, loading or training it on first use."""
+    global _models
+    if _models is None:
+        with _lock:
+            if _models is None:
+                if os.path.exists(RF_MODEL_PATH) and os.path.exists(ISO_MODEL_PATH):
+                    _models = (joblib.load(RF_MODEL_PATH), joblib.load(ISO_MODEL_PATH))
+                else:
+                    _models = _train_base_models()
+    return _models
+
+
+def reload_models():
+    """Drop cached models and explainer so the next request picks up new artifacts."""
+    global _models, _threshold
+    with _lock:
+        _models = None
+        _threshold = None
+    reset_explainer()
+
+
+def decision_threshold() -> float:
+    global _threshold
+    if _threshold is None:
+        _threshold = load_threshold(DEFAULT_THRESHOLD)
+    return _threshold
+
+
+def calibrated_score(probability: float) -> float:
+    """Rescale P(malicious) so the calibrated threshold maps to 0.5.
+
+    The risk engine blends the ML signal with behaviour and intel, so it must
+    see the model's *operating point*, not its raw output. With a threshold of
+    0.87, a raw 0.6 is a confident "benign" and should contribute like 0.34,
+    not like 0.6. Piecewise-linear and monotonic, so ranking is unchanged.
     """
-    Trains the ML Ensemble on a REAL uploaded dataset.
-    Expects df to have feature columns + 'label' (1 for Malicious, 0 for Benign).
+    t = decision_threshold()
+    if probability < t:
+        return 0.5 * probability / t
+    return 0.5 + 0.5 * (probability - t) / (1.0 - t) if t < 1.0 else 1.0
+
+
+def dga_model_ready() -> bool:
+    return dga_model is not None and dga_model.is_ready()
+
+
+def train_custom_model(df: pd.DataFrame) -> dict:
+    """Retrain the ensemble on an uploaded, labelled dataset and hot-swap it in.
+
+    Expects the FEATURE_ORDER columns plus 'label' (1 malicious, 0 benign).
     """
-    if 'label' not in df.columns:
+    if "label" not in df.columns:
         raise ValueError("Dataset must contain a 'label' column for supervised training.")
-        
-    X = df.drop(columns=['label'])
-    y = df['label']
-    
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    
+    counts = df["label"].value_counts()
+    if len(counts) < 2 or counts.min() < 2:
+        raise ValueError("Dataset needs at least two examples of each class (0 and 1).")
+
+    X = df[FEATURE_ORDER].to_numpy(dtype=float)
+    y = df["label"].astype(int).to_numpy()
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y
+    )
+
     rf_clf = RandomForestClassifier(n_estimators=150, max_depth=10, random_state=42)
     rf_clf.fit(X_train, y_train)
-    joblib.dump(rf_clf, RF_MODEL_PATH)
-    
     y_pred = rf_clf.predict(X_test)
     metrics = {
         "accuracy": float(accuracy_score(y_test, y_pred)),
         "precision": float(precision_score(y_test, y_pred, zero_division=0)),
         "recall": float(recall_score(y_test, y_pred, zero_division=0)),
         "f1_score": float(f1_score(y_test, y_pred, zero_division=0)),
-        "feature_importances": dict(zip(X.columns, map(float, rf_clf.feature_importances_)))
+        "feature_importances": dict(zip(FEATURE_ORDER, map(float, rf_clf.feature_importances_))),
+        "note": "Held-out 20% split. A custom model resets the operating point to the 0.5 default; "
+                "re-run calibrate.py to choose one for this data.",
     }
-    
-    iso_clf = IsolationForest(contamination=0.15, random_state=42)
-    iso_clf.fit(X)
+
+    iso_clf = IsolationForest(contamination=0.15, random_state=42).fit(X)
+    os.makedirs(MODELS_DIR, exist_ok=True)
+    joblib.dump(rf_clf, RF_MODEL_PATH)
     joblib.dump(iso_clf, ISO_MODEL_PATH)
-    
+    reload_models()
+    # The shipped calibration was chosen for the bundled model, not this one.
+    global _threshold
+    _threshold = DEFAULT_THRESHOLD
     return metrics
 
-def load_models():
-    """Loads the pre-trained ensemble models."""
-    if not os.path.exists(RF_MODEL_PATH) or not os.path.exists(ISO_MODEL_PATH):
-        return train_base_model()
-    return joblib.load(RF_MODEL_PATH), joblib.load(ISO_MODEL_PATH)
 
 def predict(features_array, domain: str = ""):
-    """
-    Feeds features into the Hybrid Ensemble Model (RF + Isolation Forest + DL DGA Model).
+    """Score one feature vector with the ensemble.
+
+    Returns (label, malicious_probability, isolation_prediction, shap_text):
+      - label: 1 when malicious_probability exceeds the calibrated threshold
+      - malicious_probability: RF P(malicious), averaged with the DL DGA score
+        only when trained DL weights are available
+      - isolation_prediction: -1 outlier / 1 inlier (IsolationForest)
+      - shap_text: human-readable top contributing features, or ""
     """
     rf, iso = load_models()
-    
-    feature_names = [
-        'entropy', 'length', 'subdomain_length', 'ngram_score', 'frequency', 
-        'consonant_ratio', 'digit_ratio', 'unique_char', 'vowels_consonant_ratio',
-        'max_continuous_numeric_len', 'max_continuous_alphabet_len', 
-        'max_continuous_consonants_len', 'max_continuous_same_char',
-        'upper_count', 'lower_count', 'special_count', 'labels', 'labels_max', 'labels_average',
-        'entropy_to_length_ratio', 'high_entropy_flag', 'domain_complexity'
-    ]
-    
-    # Wrap in DataFrame to include feature names and suppress warnings
-    X = pd.DataFrame([features_array], columns=feature_names)
-    
-    rf_label = rf.predict(X)[0]
-    probabilities = rf.predict_proba(X)[0]
-    iso_prediction = iso.predict(X)[0]
+    # Models are fitted on plain arrays (train.py), so predict on one too.
+    X = np.asarray([features_array], dtype=float)
 
-    # 3. Character-Level DL Model Prediction
-    dga_score = 0.0
-    if domain:
+    rf_prob_malicious = float(rf.predict_proba(X)[0][1])
+    iso_prediction = int(iso.predict(X)[0])
+
+    malicious_probability = rf_prob_malicious
+    if domain and dga_model_ready():
         try:
-            dga_score = dga_model.predict(domain)
-        except Exception as e:
-            print(f"[!] DGA Model Prediction Error: {e}")
+            malicious_probability = (rf_prob_malicious + dga_model.predict(domain)) / 2.0
+        except Exception as e:  # never let the optional scorer break a request
+            logger.warning("DGA model prediction failed: %s", e)
 
-    # Hybrid Ensemble: Average RF Malicious Probability and DL DGA Score
-    rf_prob_malicious = float(probabilities[1])  # Probability of class 1 (Malicious)
-
-    # Ensemble the RF probability with the deep-learning DGA score ONLY when that
-    # model is actually available. Previously we always averaged with dga_score,
-    # which is 0.0 whenever torch isn't installed -- that halved every score so the
-    # 0.5 threshold could never be crossed (everything looked benign) and inverted
-    # the downstream risk ranking. Fall back to the RF probability alone otherwise.
-    if dga_model is not None and dga_score > 0.0:
-        malicious_probability = (rf_prob_malicious + dga_score) / 2.0
-    else:
-        malicious_probability = rf_prob_malicious
-
-    # Final label based on the malicious probability (threshold 0.5)
-    final_label = 1 if malicious_probability > 0.5 else 0
+    final_label = 1 if malicious_probability >= decision_threshold() else 0
 
     shap_text = ""
-    # Only run heavy SHAP explainer if classified as malicious or anomaly, for performance
+    # SHAP is comparatively expensive; only explain what we are going to flag.
     if final_label == 1 or iso_prediction == -1:
-        shap_text = get_shap_explanation(rf, features_array, feature_names)
+        shap_text = get_shap_explanation(rf, X[0], FEATURE_ORDER)
 
-    # Return the MALICIOUS PROBABILITY (0-1, higher = more malicious) so the risk
-    # engine receives a true threat signal instead of label-confidence.
-    return int(final_label), float(malicious_probability), int(iso_prediction), shap_text
+    return int(final_label), float(malicious_probability), iso_prediction, shap_text

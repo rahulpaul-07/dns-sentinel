@@ -25,9 +25,11 @@ import numpy as np
 
 # Allow "python backend/evaluate.py" as well as "-m backend.evaluate".
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from features import extract_features  # noqa: E402
+from features import FEATURE_ORDER, vectorize  # noqa: E402,F401  (re-exported)
 
 from sklearn.ensemble import RandomForestClassifier  # noqa: E402
+
+RF_PARAMS = dict(n_estimators=300, max_depth=30, min_samples_split=10, random_state=42)
 from sklearn.model_selection import (  # noqa: E402
     StratifiedKFold,
     cross_val_predict,
@@ -42,16 +44,6 @@ from sklearn.metrics import (  # noqa: E402
     roc_auc_score,
 )
 
-# The 22-feature order the API builds its vector in (mirrors model.py / main.py).
-FEATURE_ORDER = [
-    "entropy", "length", "subdomain_length", "ngram_score", "frequency",
-    "consonant_ratio", "digit_ratio", "unique_char", "vowels_consonant_ratio",
-    "max_continuous_numeric_len", "max_continuous_alphabet_len",
-    "max_continuous_consonants_len", "max_continuous_same_char",
-    "upper_count", "lower_count", "special_count", "labels", "labels_max",
-    "labels_average", "entropy_to_length_ratio", "high_entropy_flag",
-    "domain_complexity",
-]
 
 
 def load(path: str, domain_col: str, label_col: str):
@@ -62,18 +54,14 @@ def load(path: str, domain_col: str, label_col: str):
             domain = (row.get(domain_col) or "").strip()
             if not domain:
                 continue
-            feats = extract_features({"query": domain})
-            feats["frequency"] = 1  # matches the API's per-request default
-            X.append([feats[name] for name in FEATURE_ORDER])
+            X.append(vectorize(domain))
             y.append(int(row[label_col]))
     return np.array(X, dtype=float), np.array(y, dtype=int)
 
 
 def _rf() -> RandomForestClassifier:
-    # Identical hyperparameters to model.train_base_model() for parity.
-    return RandomForestClassifier(
-        n_estimators=300, max_depth=30, min_samples_split=10, random_state=42
-    )
+    # Identical hyperparameters to the production model in train.py.
+    return RandomForestClassifier(**RF_PARAMS)
 
 
 def _line(tag: str, y_true, y_pred, y_prob=None) -> str:

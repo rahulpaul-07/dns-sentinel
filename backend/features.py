@@ -1,6 +1,25 @@
+"""Structural feature extraction for DNS query names.
+
+`FEATURE_ORDER` is the single source of truth for the model's input vector. The
+trainer, the evaluator, the calibrator, the benchmark and the live API all build
+their vectors through `feature_vector()`, so a reordering can never silently
+desynchronise training from inference.
+"""
 import math
-from collections import Counter
 import re
+from collections import Counter
+
+# The 22-dimensional model input, in order. Changing this invalidates trained
+# artifacts: retrain with `python -m backend.train`.
+FEATURE_ORDER = [
+    "entropy", "length", "subdomain_length", "ngram_score", "frequency",
+    "consonant_ratio", "digit_ratio", "unique_char", "vowels_consonant_ratio",
+    "max_continuous_numeric_len", "max_continuous_alphabet_len",
+    "max_continuous_consonants_len", "max_continuous_same_char",
+    "upper_count", "lower_count", "special_count", "labels", "labels_max",
+    "labels_average", "entropy_to_length_ratio", "high_entropy_flag",
+    "domain_complexity",
+]
 
 # Simple baseline bigram frequencies for 'normal' English-like structural domain representation
 ENGLISH_BIGRAMS = {
@@ -123,3 +142,19 @@ def extract_features(dns_record):
         'high_entropy_flag': high_entropy_flag,
         'domain_complexity': domain_complexity
     }
+
+
+def feature_vector(features: dict, frequency: float = 1) -> list:
+    """Order an `extract_features()` dict into the model's input vector.
+
+    `frequency` is the per-source query rate. Offline datasets have no temporal
+    context, so training uses the same default of 1 that a first-seen source
+    gets at inference time.
+    """
+    merged = {**features, "frequency": features.get("frequency", frequency)}
+    return [merged[name] for name in FEATURE_ORDER]
+
+
+def vectorize(domain: str, frequency: float = 1) -> list:
+    """Convenience: raw domain string -> model input vector."""
+    return feature_vector(extract_features({"query": domain}), frequency)

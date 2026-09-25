@@ -7,13 +7,25 @@ Usage:
 - <training_csv>         : the project's bundled data (default: data/dns_exfiltration_dataset.csv
                            relative to this script's folder, with a 'domain'+'label' header)
 """
-import csv, math, os, re, sys, random
+import csv
+import math
+import os
+import random
+import re
+import sys
 from collections import Counter
+
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import (
+    accuracy_score,
+    confusion_matrix,
+    f1_score,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+)
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import (accuracy_score, precision_score, recall_score,
-                             f1_score, roc_auc_score, confusion_matrix)
 
 # ---- feature extraction (identical to backend/features.py) -----------------
 ENGLISH_BIGRAMS = {'er':0.05,'th':0.05,'in':0.04,'on':0.03,'an':0.03,'re':0.02,'nd':0.02,
@@ -123,7 +135,7 @@ def main():
     print("\nper-DGA-family recall (cross-domain model):")
     for f in sorted(set(fam[yb==1])):
         m=(fam==f)&(yb==1)
-        print(f"  {str(f):<16} recall={recall_score(yb[m],yp[m],zero_division=0):.3f}  (n={int(m.sum())})")
+        print(f"  {f!s:<16} recall={recall_score(yb[m],yp[m],zero_division=0):.3f}  (n={int(m.sum())})")
     bm=fam=='legit'
     if bm.sum(): print(f"  benign FP-rate={ (yp[bm]==1).mean():.3f}  (n={int(bm.sum())})")
 
