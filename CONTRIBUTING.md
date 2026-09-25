@@ -9,10 +9,10 @@ a local environment running, the project layout, and the conventions we follow.
 |------|-----------------|
 | `backend/` | FastAPI service — ML inference, SSE streaming, SOAR actions, PDF reports |
 | `frontend/` | Vite + React SOC dashboard |
-| `extension/` | Manifest V3 Chrome extension for browser-level DNS telemetry |
+| `extension/` | Manifest V3 browser extension (build with `npm run build`, load `dist/`) |
 | `data/` | Training / evaluation datasets and sample captures |
-| `tools/` | Standalone scripts — `ml_pipeline.py`, `run_real_benchmark.py`, service demos |
-| `docs/` | Generated figures |
+| `tools/` | Standalone scripts: `run_real_benchmark.py`, `demo_soar.py`, `demo_intel.py` |
+| `docs/` | [ARCHITECTURE.md](docs/ARCHITECTURE.md) and generated figures |
 | `vendor/` | Third-party components, unmodified — see [THIRD_PARTY.md](THIRD_PARTY.md) |
 
 Inside `backend/`, three modules are the source of truth for every number the
@@ -30,13 +30,13 @@ cd backend
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 cp ../.env.example .env        # optional: fill in API keys
-uvicorn main:app --reload --port 8000
+uvicorn main:app --reload --port 8001
 ```
 
-The API is then available at http://localhost:8000 (interactive docs at
-`/docs`, health probe at `/health`, version at `/version`).
+The API is then available at http://127.0.0.1:8001 (interactive docs at
+`/docs`, health probe at `/health`, serving model details at `/model`).
 
-### Frontend (Node 20+)
+### Frontend (Node 20.19+ or 22.12+)
 
 ```bash
 cd frontend
@@ -44,20 +44,23 @@ npm install
 npm run dev
 ```
 
-Point the dashboard at your backend by setting `VITE_API_URL` in
-`frontend/.env` if it isn't running on the default port.
+The dev server proxies `/api` to `http://127.0.0.1:8001`; set `BACKEND_URL`
+to point it elsewhere. Production builds call `VITE_API_URL` directly (see
+`frontend/.env.example`).
 
 ## Running the tests
 
 ```bash
 cd backend
-pip install pytest
+pip install pytest ruff
+ruff check .
 pytest -q
 ```
 
-The fast feature/risk-engine tests run with no heavy dependencies; the ML
-contract tests run automatically once `scikit-learn` and `shap` are installed
-(they are part of `requirements.txt`). CI runs the full suite on every push.
+Tests use a throwaway SQLite file and force `SOAR_DRY_RUN=true` (see
+`tests/conftest.py`), so they never touch your data or firewall. The suite
+covers features, risk tiering, the model contract, calibration, metric drift
+against the README, the Zeek parser and the HTTP API. CI runs it on every push.
 
 ## Coding conventions
 
@@ -65,8 +68,10 @@ contract tests run automatically once `scikit-learn` and `shap` are installed
   prefixes: `feat:`, `fix:`, `test:`, `docs:`, `ci:`, `refactor:`, `chore:`.
 - Keep pull requests focused; one logical change per PR.
 - Add or update tests for any behavioural change to the backend.
-- Run `pytest -q` (backend) and `npm run build` (frontend) before opening a PR —
-  both must pass, which CI enforces.
+- Run `ruff check . && pytest -q` (backend) and `npm run lint && npm run build`
+  (frontend) before opening a PR. CI enforces both.
+- If a change moves a published metric, update README/MODEL_CARD in the same PR;
+  `test_metric_drift.py` will fail until you do.
 
 ## Reporting issues
 

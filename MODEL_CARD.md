@@ -9,9 +9,9 @@ hand-typed numbers) and can be reproduced in under a minute.
 | | |
 |---|---|
 | **Task** | Binary classification of DNS queries: benign (0) vs. malicious (1), targeting DGA domains and DNS-based data exfiltration. |
-| **Model** | `RandomForestClassifier` (300 trees, `max_depth=30`, `min_samples_split=10`, `random_state=42`) as the primary classifier, ensembled with an `IsolationForest` anomaly detector and an **optional** character-level deep-learning DGA scorer (`backend/dga_model.py`, skipped when `torch` is absent). |
+| **Model** | `RandomForestClassifier` (300 trees, `max_depth=30`, `min_samples_split=10`, `random_state=42`) as the primary classifier, plus an `IsolationForest` anomaly detector and an **optional** character-level CNN-BiLSTM DGA scorer (`backend/dga_model.py`). The DL scorer is used only when `torch` is installed **and** trained weights exist; an untrained network is never averaged in. |
 | **Input** | A single DNS query string → a **22-dimensional feature vector** (`backend/features.py`). |
-| **Output** | `(label, malicious_probability ∈ [0,1], anomaly_flag, SHAP explanation)`. Decision threshold = 0.5. |
+| **Output** | `(label, malicious_probability ∈ [0,1], anomaly_flag, SHAP explanation)`. Decision threshold = **0.873**, loaded from `backend/models/calibration.json` (see *Operating point*). `GET /model` reports the threshold actually in use. |
 | **Intended use** | Portfolio / research demonstrator for DNS threat detection and SOC workflow tooling. **Not** production-hardened for enterprise deployment as-is. |
 
 ## Features (22)
@@ -78,15 +78,45 @@ in-distribution accuracy — is the metric that governs analyst alert fatigue.
 - **No adversarial robustness** evaluation. Dictionary-based DGAs (e.g.
   suppobox, matsnu) that mimic natural language are expected to be much harder
   than the random-looking DGAs in the bundled set.
-- **Threshold (0.5) is uncalibrated.** A precision-recall-curve-driven
-  operating point is future work.
+- **Thin benign class in the exfil set.** Its benign rows are a handful of
+  bare apex domains (`microsoft.com`, `apple.com`, ...), so the model gives
+  ordinary subdomains such as `mail.google.com` raw probabilities of 0.4-0.6.
+  The calibrated threshold classifies these correctly, and the risk engine
+  receives the *calibrated* score (threshold mapped to 0.5) rather than the raw
+  probability, so they land in the Low tier. A regression test pins this. The
+  real fix is more representative benign training data.
+- **`upper_count` is constant.** Queries are lower-cased at the API boundary
+  (DNS is case-insensitive), so this feature is always 0. It is kept only to
+  preserve the 22-feature contract of the trained artifacts.
+- **`frequency` is constant in training.** Offline datasets have no timing, so
+  training uses 1; the live per-source rate feeds the behavioural risk terms
+  instead.
 
-## Roadmap to production-grade rigor
+## Operating point
 
-Benchmark against public corpora (CIC-Bell-DNS-EXF-2021 for exfil; Bambenek/
-UMUDGA/DGArchive vs. Tranco for DGA), report per-DGA-family recall, calibrate
-the decision threshold to a target false-positive budget, and track metric
-drift in CI.
+The decision threshold is chosen by `backend/calibrate.py` to maximise recall
+under an explicit false-positive budget, on cross-dataset scores (in-distribution
+scores are too separable to carry information):
+
+| Budget | Threshold | FPR | Recall | Precision | False positives |
+|---|---|---|---|---|---|
+| default 0.5 | 0.503 | 0.814 | 1.000 | 0.551 | 407 |
+| FPR <= 5% | **0.873** | 0.042 | 1.000 | 0.960 | 21 |
+
+A 1% budget is unreachable in this direction; the calibrator reports that
+instead of silently widening the budget. `backend/tests/test_metric_drift.py`
+fails the build if any of these published figures stop reproducing.
+
+## What has been done vs. what remains
+
+Done: family-stratified benchmark with per-family recall ([BENCHMARK.md](BENCHMARK.md)),
+a public-corpus runner (Netlab360 / chrmor, 25 families), FPR-budget threshold
+calibration wired into the live API, and metric-drift tests in CI.
+
+Remaining: training (not just testing) on public corpora such as
+CIC-Bell-DNS-EXF-2021 and Tranco, adversarial evaluation against dictionary
+DGAs, and encrypted-transport coverage (DoH/DoT defeat query-string features
+entirely).
 
 ## Family-stratified benchmark
 
