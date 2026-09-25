@@ -23,10 +23,20 @@ def engine(tmp_path):
     return RiskEngine(config_path=str(cfg))
 
 
-def test_default_config_is_written_when_missing(tmp_path):
+def test_missing_config_uses_defaults_without_writing(tmp_path):
     cfg = tmp_path / "risk_baseline.yaml"
-    RiskEngine(config_path=str(cfg))
-    assert cfg.exists()
+    engine = RiskEngine(config_path=str(cfg))
+    assert not cfg.exists()  # never litter the working directory
+    assert engine.w_ml == 0.5 and engine.k_factor == 2.0
+
+
+def test_profiles_are_bounded(tmp_path):
+    engine = RiskEngine(config_path=str(tmp_path / "none.yaml"))
+    engine.MAX_PROFILES = 3
+    for i in range(10):
+        _run(engine.score(f"10.0.0.{i}", "example.com", ml_score=0.1))
+    assert len(engine.profiles) == 3
+    assert "10.0.0.9" in engine.profiles and "10.0.0.0" not in engine.profiles
 
 
 def test_weights_load_from_defaults(engine):
@@ -53,9 +63,37 @@ def test_profile_created_and_tracks_query_count(engine):
     assert engine.profiles["10.0.0.9"].total_queries == 2
 
 
-def test_critical_tier_for_maxed_out_signals(engine):
+def test_single_query_caps_at_high_without_behavioural_evidence(engine):
+    """One query cannot show burst behaviour, so maxed ML + intel tops out at High."""
     score, level = _run(
         engine.score("10.0.0.5", "exfil.attacker.net", ml_score=1.0, intel_score=1.0)
     )
+    assert score == 70.0
+    assert level == RiskTier.BLOCK.value
+
+
+def test_critical_tier_needs_a_diverse_burst(engine):
+    """A burst of distinct maxed-out queries adds the behaviour term and goes Critical."""
+    level = None
+    for i in range(20):
+        score, level = _run(
+            engine.score("10.0.0.6", f"chunk{i}.exfil.attacker.net", ml_score=1.0, intel_score=1.0)
+        )
     assert score > 80
     assert level == RiskTier.CRITICAL.value
+
+
+def test_quiet_host_small_blip_is_not_escalated(engine):
+    """Deviation below the absolute floor is noise: a 5 -> 11 blip stays Low."""
+    for _ in range(20):
+        _run(engine.score("10.0.0.7", "same.example.com", ml_score=0.1))
+    _, level = _run(engine.score("10.0.0.7", "same.example.com", ml_score=0.22))
+    assert level == RiskTier.MONITOR.value
+
+
+def test_deviation_from_own_baseline_escalates_one_tier(engine):
+    for _ in range(20):
+        _run(engine.score("10.0.0.8", "same.example.com", ml_score=0.1))
+    score, level = _run(engine.score("10.0.0.8", "odd.example.com", ml_score=0.6))
+    assert 25 < score <= 50                   # static tier would be Medium ...
+    assert level == RiskTier.BLOCK.value      # ... but it is unusual for this host
