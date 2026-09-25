@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import string
 import os
 
 # Device configuration
@@ -67,28 +66,45 @@ def preprocess_domain(domain: str):
         indices += [0] * (MAX_LEN - len(indices))
     return torch.tensor(indices, dtype=torch.long).unsqueeze(0).to(device)
 
-# Global model instance for inference
+# Trained weights live next to this module; produce them with `python train_dga.py`.
+MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dga_model.pt")
+
+# Global model instance for inference. Stays None unless trained weights load:
+# an untrained network outputs noise, and averaging noise into the ensemble is
+# worse than not using the model at all.
 _model_instance = None
+_load_attempted = False
+
 
 def get_model():
-    global _model_instance
-    if _model_instance is None:
-        model_path = os.path.join(os.path.dirname(__file__), "dga_model.pt")
-        _model_instance = DGAModel(vocab_size=VOCAB_SIZE).to(device)
-        if os.path.exists(model_path):
+    global _model_instance, _load_attempted
+    if not _load_attempted:
+        _load_attempted = True
+        if os.path.exists(MODEL_PATH):
             try:
-                _model_instance.load_state_dict(torch.load(model_path, map_location=device))
+                model = DGAModel(vocab_size=VOCAB_SIZE).to(device)
+                model.load_state_dict(torch.load(MODEL_PATH, map_location=device, weights_only=True))
+                model.eval()
+                _model_instance = model
             except Exception as e:
-                print(f"[!] Error loading DGA model: {e}")
-        _model_instance.eval()
+                print(f"[!] Error loading DGA model weights from {MODEL_PATH}: {e}")
     return _model_instance
 
+
+def is_ready() -> bool:
+    """True only when trained weights are loaded and the scorer is meaningful."""
+    return get_model() is not None
+
+
 def predict(domain: str) -> float:
-    """
-    Synchronous prediction for a single domain.
-    Optimized for <2ms CPU latency.
+    """Malicious probability for a single domain from the character-level model.
+
+    Raises RuntimeError when no trained weights are available; callers should
+    check is_ready() first.
     """
     model = get_model()
+    if model is None:
+        raise RuntimeError("DGA model weights not loaded; run train_dga.py")
     with torch.no_grad():
         input_tensor = preprocess_domain(domain)
         length_tensor = torch.tensor([[len(domain)]], dtype=torch.float).to(device)

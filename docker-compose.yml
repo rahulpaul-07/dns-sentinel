@@ -1,27 +1,28 @@
-version: '3.8'
-
+# docker compose up --build   ->  dashboard on http://localhost:8080
 services:
   backend:
-    build: 
-      context: ./backend
-      dockerfile: Dockerfile
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./backend:/app
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file:
+      - path: backend/.env
+        required: false
     environment:
-      - PORT=8000
+      SOAR_DRY_RUN: "true"
+    ports:
+      - "8001:8001"
+    volumes:
+      - dnsentinel-data:/app/var
     restart: unless-stopped
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
+    build: ./frontend
     ports:
-      - "5173:5173"
-    environment:
-      - VITE_API_BASE=http://localhost:8000
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
     restart: unless-stopped
+
+volumes:
+  dnsentinel-data:

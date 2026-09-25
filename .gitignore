@@ -1,64 +1,48 @@
 # Python
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
-.Python
-*.so
-.env
+*.egg-info/
+.venv/
 venv/
 env/
-*.egg-info/
-dist/
-build/
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
 
-# SQLite Database (contains real data - do not commit)
+# Local configuration (see .env.example)
+.env
+.env.local
+
+# Runtime data: SQLite ledger and any local captures
 *.db
 *.sqlite
+*.log
+!data/samples/*.log
 
-# ML Model files (large binary files)
+# Generated model artifacts (regenerate: python -m backend.train / train_dga.py)
+*.joblib
 *.pt
 *.pkl
-*.joblib
+!backend/models/metrics.json
+!backend/models/calibration.json
 
-# Test / temp files
-backend/dummy.csv
-backend/test_*.py
-backend/patch_dashboard.py
+# Generated / downloaded datasets (see BENCHMARK.md)
+backend/dga_dataset_generated.csv
+data/dga_benchmark.csv
+data/dga_domains_full.csv
+data/real_benchmark.csv
 
-# Node.js
+# Node
 node_modules/
-frontend/dist/
-frontend/.vite/
-*.log
+dist/
+.vite/
 npm-debug.log*
 
-# OS Files
+# OS / editors
 .DS_Store
 Thumbs.db
-
-# IDE
 .vscode/
 .idea/
 *.swp
-
-# Runtime state / logs that must not be committed
-.log
-*.log
-backend/firewall_blocklist.json
-backend/seed_res.txt
-data/*.log
-
-# Generated model artifacts (regenerate with: python -m backend.train)
-backend/models/*.joblib
-!backend/models/metrics.json
-!backend/models/README.md
-
-# Stray runtime risk config generated at repo root (canonical copy is backend/risk_baseline.yaml)
-/risk_baseline.yaml
-
-# Generated benchmark (reproduce with: python -m backend.benchmarks.generate_benchmark)
-data/dga_benchmark.csv
-backend/.venv/
-data/dga_domains_full.csv
-data/real_benchmark.csv

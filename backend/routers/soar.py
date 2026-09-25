@@ -1,21 +1,24 @@
 """SOAR containment: list active blocks and manual unblock override."""
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException
 
-from database import SessionLocal, SecurityRule
 from actions import orchestrator
+from security import require_api_key
 
-router = APIRouter()
+router = APIRouter(tags=["soar"])
 
 
-@router.post("/unblock/{entity}")
+@router.post("/unblock/{entity}", dependencies=[Depends(require_api_key)])
 async def unblock_entity(entity: str):
-    """Manual analyst override to unblock an IP/Domain"""
-    return orchestrator.trigger_unblock(entity)
+    """Analyst override: lift an active block on an IP or domain."""
+    result = orchestrator.trigger_unblock(entity)
+    if result["status"] == "INVALID":
+        raise HTTPException(400, result["message"])
+    if result["status"] == "NOT_FOUND":
+        raise HTTPException(404, result["message"])
+    return result
 
 
 @router.get("/blocked")
 async def list_blocked_entities():
-    """Returns a list of all currently active SOAR blocks"""
-    with SessionLocal() as db:
-        return db.query(SecurityRule).filter(SecurityRule.is_active == True).all()
-
+    """All currently active SOAR rules."""
+    return orchestrator.list_active()

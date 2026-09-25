@@ -17,7 +17,7 @@ MITRE_MAPPING = {
 }
 
 def map_threat(features, pred_label, iso_pred):
-    """Maps rigorous ML classifications to MITRE ATT&CK techniques with mitigations."""
+    """Map detections to MITRE ATT&CK techniques (rule-based on the extracted features)."""
     if pred_label == 0 and iso_pred == 1:
         return None
     
@@ -39,33 +39,33 @@ def map_threat(features, pred_label, iso_pred):
     return mapping
 
 def generate_explanation(features, pred_label, iso_pred, risk_score):
-    """Generates an intelligent human-readable explanation mapping deep protocol features."""
+    """Plain-language reasons for a score, built from the features that drove it."""
     if risk_score <= 30:
-        return "Standard benign DNS resolution. Traffic parameters and protocol structure match human-normal baselines."
+        return "No structural or behavioural indicators; consistent with normal resolution."
     
     reasons = []
     
     if iso_pred == -1:
-        reasons.append("[Anomaly] Isolation Forest flagged this packet structure as a zero-day structural anomaly.")
+        reasons.append("[Anomaly] Isolation Forest rates this name as an outlier relative to the training data.")
         
     if features.get('subdomain_length', 0) > 20 and features.get('entropy', 0) > 4.0:
         reasons.append(f"[Protocol] Subdomain contains high entropy encoded data typical of tunneling ({features['entropy']:.2f}).")
     elif features.get('entropy', 0) > 4.0:
-        reasons.append(f"[Payload] High Shannon Entropy ({features['entropy']:.2f}) indicates encrypted data packing.")
+        reasons.append(f"[Payload] High Shannon Entropy ({features['entropy']:.2f}) is consistent with encoded or random data.")
         
     if features.get('labels_max', 0) > 40:
-        reasons.append(f"[Protocol] Unusually long DNS label detected ({features['labels_max']} chars). Strong indicator of base64 tunneling limits.")
+        reasons.append(f"[Protocol] Unusually long DNS label detected ({features['labels_max']} chars). Long labels are typical of encoded tunnelling payloads.")
         
     if features.get('ngram_score', 1.0) < 0.01:
-        reasons.append(f"[Structural] Domain completely lacks standard human-readable n-grams ({features['ngram_score']:.4f}). Likely an algorithmic DGA generated domain.")
+        reasons.append(f"[Structural] Domain has almost no common English bigrams ({features['ngram_score']:.4f}). Consistent with an algorithmically generated (DGA) name.")
         
     if features.get('frequency', 0) > 40:
         reasons.append(f"[Behavioral] Frequent queries to different or deeply nested domains from the same source IP ({features['frequency']} req/min) detected.")
         
     if features.get('max_continuous_consonants_len', 0) > 7:
-        reasons.append(f"[Structural] Dense consonant blocks ({features['max_continuous_consonants_len']} in a row) heavily deviates from valid naming structures.")
+        reasons.append(f"[Structural] Dense consonant blocks ({features['max_continuous_consonants_len']} in a row) are unusual for human-chosen names.")
 
     if not reasons:
-        reasons.append("Random Forest Ensemble detected suspicious statistical ML deviation mapping to trained malicious attack architectures.")
+        reasons.append("The Random Forest score is elevated, but no single structural indicator dominates.")
         
     return " ".join(reasons)

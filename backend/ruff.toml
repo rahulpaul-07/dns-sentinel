@@ -1,0 +1,8 @@
+# Lint gate run in CI: real defects only (syntax errors, undefined names,
+# unused imports/variables, bare excepts, mutable defaults) -- not style.
+#   ruff check backend
+target-version = "py310"
+line-length = 120
+
+[lint]
+select = ["E9", "F", "B006", "E711", "E712", "E722"]

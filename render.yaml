@@ -3,19 +3,21 @@ services:
     name: dnsentinel-backend
     runtime: python
     rootDir: backend
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt && python train.py
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
     envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: CORS_ORIGINS
+        value: "*"   # the API uses no cookies; narrow to the dashboard origin if preferred
+      - key: SOAR_DRY_RUN
+        value: "true"
+      - key: API_KEY
+        sync: false
       - key: VIRUSTOTAL_API_KEY
         sync: false
       - key: ABUSEIPDB_API_KEY
         sync: false
-      - key: GROQ_API_KEY
+      - key: OTX_API_KEY
         sync: false
-      - key: REDIS_HOST
-        value: localhost
-      - key: REDIS_PORT
-        value: "6379"
-      - key: DEBUG
-        value: "False"
-    healthCheckPath: /

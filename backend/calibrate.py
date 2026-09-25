@@ -38,12 +38,10 @@ from datetime import datetime, timezone
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from evaluate import FEATURE_ORDER, load, _rf  # noqa: E402
+from evaluate import load, _rf  # noqa: E402
 
 from sklearn.metrics import (  # noqa: E402
     confusion_matrix,
-    precision_score,
-    recall_score,
     roc_auc_score,
 )
 from sklearn.model_selection import StratifiedKFold, cross_val_predict  # noqa: E402

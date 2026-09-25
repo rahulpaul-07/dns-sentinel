@@ -62,39 +62,6 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     }
 });
 
-let nativeHostConnected = true;
-let port = null;
-
-function connectNative() {
-    try {
-        port = chrome.runtime.connectNative('com.dnssentinel.host');
-        port.onDisconnect.addListener(() => {
-            nativeHostConnected = false;
-            console.warn("Native host disconnected or not installed. Falling back to JS heuristics.");
-            port = null;
-        });
-        nativeHostConnected = true;
-    } catch(e) {
-        nativeHostConnected = false;
-    }
-}
-connectNative();
-
-function sendNativeMessagePromise(msg) {
-    return new Promise((resolve, reject) => {
-        if (!nativeHostConnected || !port) {
-            reject(new Error("Native host not connected"));
-            return;
-        }
-        const handler = (response) => {
-            port.onMessage.removeListener(handler);
-            resolve(response);
-        };
-        port.onMessage.addListener(handler);
-        port.postMessage(msg);
-    });
-}
-
 const recentDomains = new Set();
 const pendingToasts = new Map(); // tabId -> event
 
@@ -209,28 +176,29 @@ async function askGroqForScore(domain, features) {
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                model: "llama3-8b-8192",
+                model: "llama-3.1-8b-instant",
+                temperature: 0,
                 response_format: { type: "json_object" },
                 messages: [{
                     role: "user",
-                    content: `Analyze the domain name "${domain}". Return ONLY a strict JSON object: {"score": <highly realistic decimal 0-100>, "reason": "<short explanation>"}`
+                    content: `Assess whether the domain name "${domain}" looks algorithmically generated or like DNS tunnelling. Return ONLY JSON: {"score": <number 0-100>, "reason": "<one sentence>"}`
                 }]
             })
         });
         const data = await response.json();
-        const text = data.choices[0].message.content;
-        const result = JSON.parse(text.trim());
+        const result = JSON.parse(data.choices[0].message.content.trim());
+        const llmScore = Math.min(Math.max(Number(result.score) || 0, 0), 100);
 
-        // ML Enhancement: Blend LLM score with structural math for ultra-realistic floats
-        const baseRisk = (features.entropy * 15) + (features.digit_ratio * 40);
-        const realisticScore = (result.score * 0.5) + (baseRisk * 0.5) + (Math.random() * 5);
-        const finalScore = Math.min(Math.max(realisticScore, 0), 100);
+        // Optional LLM second opinion, averaged with the same structural terms the
+        // local heuristic uses. Deterministic (temperature 0, no added noise).
+        const structural = Math.min((features.entropy * 15) + (features.digit_ratio * 40), 100);
+        const finalScore = (llmScore * 0.5) + (structural * 0.5);
 
         return {
             ml_score: finalScore / 100,
             isolation_score: 1,
             final_score: finalScore,
-            shap_reason: `[Groq AI] ${result.reason}`
+            shap_reason: `[LLM second opinion: ${llmScore}] ${result.reason}`
         };
     } catch (e) {
         return null;

@@ -4,9 +4,9 @@ import tailwindcss from '@tailwindcss/vite'
 
 // https://vite.dev/config/
 export default defineConfig(() => {
-  // In development, proxy to local backend.
-  // In production (Vercel), VITE_API_URL will be set to the Render backend URL.
-  const backendUrl = process.env.VITE_API_URL || 'http://127.0.0.1:8001';
+  // Dev server only: /api/* is proxied to the local backend (override with
+  // BACKEND_URL). Production builds call VITE_API_URL directly (see api.js).
+  const backendUrl = process.env.BACKEND_URL || 'http://127.0.0.1:8001';
   const wsBackendUrl = backendUrl.replace(/^http/, 'ws');
 
   return {

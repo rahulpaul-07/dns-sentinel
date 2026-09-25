@@ -1,17 +1,24 @@
+"""Per-source burst detection over a short sliding window."""
 import time
-from collections import deque
+from collections import OrderedDict, deque
+
 
 class BehavioralAnalyzer:
+    MAX_SOURCES = 10_000  # LRU bound on tracked source IPs
+
     def __init__(self, time_window=30):
         self.time_window = time_window
-        self.ip_history = {}
-        
+        self.ip_history = OrderedDict()
+
     def analyze(self, source_ip, domain):
         current_time = time.time()
-        
+
         if source_ip not in self.ip_history:
             self.ip_history[source_ip] = deque(maxlen=200)
-            
+            if len(self.ip_history) > self.MAX_SOURCES:
+                self.ip_history.popitem(last=False)
+        self.ip_history.move_to_end(source_ip)
+
         history = self.ip_history[source_ip]
         history.append((current_time, domain))
         

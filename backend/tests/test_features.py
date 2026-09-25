@@ -3,7 +3,6 @@
 These lock in the numerical behaviour of the 22-vector feature extractor so
 future model or refactor work can't silently change detection inputs.
 """
-import math
 
 import pytest
 

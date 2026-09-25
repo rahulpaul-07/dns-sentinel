@@ -1,32 +1,25 @@
+"""Run the threat-intel enrichment layer on one domain/IP and print the result.
+
+    python tools/demo_intel.py [domain] [ip]
+
+With no VIRUSTOTAL_API_KEY / ABUSEIPDB_API_KEY / OTX_API_KEY set, only the
+local heuristics (risky TLDs, tunnelling-tool keywords) contribute.
+"""
 import asyncio
-import logging
 import json
-from intel_service import intel_service
+import os
+import sys
 
-# Mock Log Input
-TEST_DOMAIN = "malicious-phishing.top" # High risk TLD + keyword
-TEST_IP = "192.168.1.150"
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "backend"))
+from intel_service import intel_service  # noqa: E402
 
-async def test_intel_pipeline():
-    print(f"\n[] INITIALIZING THREAT INTEL TEST FOR: {TEST_DOMAIN} from {TEST_IP}")
-    print("-" * 50)
 
-    try:
-        # Run enrichment
-        results = await intel_service.enrich_query(TEST_DOMAIN, TEST_IP)
+async def main(domain: str, ip: str):
+    result = await intel_service.enrich_query(domain, ip)
+    print(json.dumps(result, indent=2))
 
-        # Output Results
-        print(f"\n[] NORMALIZED RESULT:")
-        print(json.dumps(results, indent=4))
-
-        # Validation Logic
-        if results['reputation_score'] > 20:
-            print(f"\n[] TEST PASSED: Risk Detected (Score: {results['reputation_score']})")
-        else:
-            print(f"\n[] TEST WARNING: No risks detected for mock domain.")
-
-    except Exception as e:
-        print(f"\n[] TEST FAILED: Pipeline Exception - {e}")
 
 if __name__ == "__main__":
-    asyncio.run(test_intel_pipeline())
+    domain = sys.argv[1] if len(sys.argv) > 1 else "dnscat-tunnel.top"
+    ip = sys.argv[2] if len(sys.argv) > 2 else "203.0.113.7"
+    asyncio.run(main(domain, ip))

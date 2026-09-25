@@ -2,8 +2,8 @@ import asyncio
 import threading
 import os
 import logging
-from typing import Dict, List, Optional, Any, Callable
-from scapy.all import sniff, DNS, DNSQR, IP, UDP, TCP
+from typing import Dict, Optional, Any, Callable
+from scapy.all import sniff, DNS, IP
 from datetime import datetime
 
 # Setup logging
@@ -11,7 +11,7 @@ logger = logging.getLogger("DNSentinel.Capture")
 
 class DNSCaptureEngine:
     """
-    Production-grade DNS Sniffing Engine using Scapy.
+    DNS sniffer built on Scapy (opt-in via ENABLE_LIVE_CAPTURE).
     Runs in a background thread to prevent blocking the FastAPI event loop.
     """
     def __init__(self):
@@ -42,6 +42,8 @@ class DNSCaptureEngine:
         try:
             dns_layer = packet.getlayer(DNS)
             ip_layer = packet.getlayer(IP)
+            if ip_layer is None:  # IPv6 / non-IP carriers are not handled yet
+                return
 
             event = {
                 "timestamp": datetime.fromtimestamp(packet.time).isoformat(),
@@ -60,7 +62,7 @@ class DNSCaptureEngine:
                     qname = dns_layer.qd.qname.decode('utf-8', errors='ignore').rstrip('.')
                     event["query_name"] = qname
                     event["query_type"] = dns_layer.qd.get_field('qtype').i2repr(dns_layer.qd, dns_layer.qd.qtype)
-                except:
+                except Exception:
                     pass
 
             if dns_layer.qr == 1: # It's a response
@@ -72,14 +74,14 @@ class DNSCaptureEngine:
                             if hasattr(ans, 'rdata'):
                                 event["answer_ips"].append(str(ans.rdata))
                             if i == 0: event["ttl"] = getattr(ans, 'ttl', 0)
-                        except:
+                        except Exception:
                             continue
             else:
                 self._stats["dns_queries"] += 1
 
-            # Real-time stream to WebSockets via the main event loop
-            if self._loop and self._broadcast_callback:
-                logger.info(f"Captured: {event['query_name']} from {event['src_ip']}")
+            # Only queries are analysed; responses would double-count every lookup.
+            if dns_layer.qr == 0 and self._loop and self._broadcast_callback:
+                logger.debug("Captured %s from %s", event["query_name"], event["src_ip"])
                 asyncio.run_coroutine_threadsafe(
                     self._broadcast_callback(event),
                     self._loop

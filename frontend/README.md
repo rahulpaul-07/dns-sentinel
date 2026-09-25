@@ -1,16 +1,22 @@
-# React + Vite
+# DNSentinel dashboard
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React 19 + Vite SOC dashboard for the DNSentinel API: live triage feed over
+Server-Sent Events, topology map, intel-driven hunting view, containment
+ledger, and per-alert reports.
 
-Currently, two official plugins are available:
+```bash
+npm install
+npm run dev        # http://localhost:5173, proxies /api to http://127.0.0.1:8001
+npm run lint
+npm run build      # static output in dist/
+```
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+| Variable | When | Purpose |
+|---|---|---|
+| `BACKEND_URL` | dev server | Proxy target for `/api` (default `http://127.0.0.1:8001`) |
+| `VITE_API_URL` | production build | Deployed API base URL; calls go there directly |
+| `VITE_API_KEY` | optional | Sent as `X-API-Key` if the API sets `API_KEY` |
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+All HTTP access goes through [`src/services/api.js`](src/services/api.js), so
+one build works behind the dev proxy, the Docker nginx proxy, or a separately
+hosted API. See the [root README](../README.md) for the full system.

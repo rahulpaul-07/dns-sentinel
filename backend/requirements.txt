@@ -1,25 +1,23 @@
 # Core API runtime — pinned for reproducible builds (CI + reviewers get identical installs).
-fastapi==0.111.0
-uvicorn[standard]==0.30.1
-pydantic==2.7.4
-python-multipart==0.0.9
-python-dotenv==1.0.1
+fastapi==0.141.1
+starlette==1.7.0
+uvicorn[standard]==0.54.0
+pydantic==2.13.5
+python-multipart==0.0.32
+python-dotenv==1.2.2
 sqlalchemy==2.0.31
 pyyaml==6.0.1
-httpx==0.27.0
-aiohttp==3.9.5
-websockets==12.0
+httpx==0.28.1
 
-# ML / inference. These are hard imports in the current code
-# (model.py -> explainability.py imports shap; main.py -> capture.py imports scapy),
-# so they live in the base install. torch is the only lazily-loaded extra — see
-# requirements-ml.txt and the guarded import in model.py.
+# ML / inference. shap is a hard import (explainability.py). torch is an
+# optional extra (requirements-ml.txt, guarded import in model.py).
+# scapy is only imported when ENABLE_LIVE_CAPTURE=true.
 scikit-learn==1.5.0
 pandas==2.2.2
 numpy==1.26.4
 joblib==1.4.2
 shap==0.45.1
-scapy==2.5.0
+scapy==2.7.0
 
 # Reporting.
 fpdf2==2.7.9

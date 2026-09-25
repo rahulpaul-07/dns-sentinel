@@ -1,73 +1,50 @@
-import time
-import requests
+"""Replay a Zeek dns.log into a running DNSentinel API, one query at a time.
+
+    python backend/ingest_zeek.py                          # bundled sample
+    python backend/ingest_zeek.py /path/to/dns.log --api http://127.0.0.1:8001 --delay 0.5
+
+For bulk loads prefer the dashboard's upload button (POST /upload), which
+parses the same format server-side.
+"""
+import argparse
+import os
 import sys
+import time
 
-API_URL = "http://localhost:8000/analyze"
+import httpx
 
-def ingest_zeek_log(filepath):
-    print(f"[*] Starting ingestion of {filepath}")
-    
-    with open(filepath, 'r') as f:
-        # Find index mapping from Zeek header
-        ts_idx, query_idx, orig_h_idx = -1, -1, -1
-        
-        for line in f:
-            line = line.strip()
-            
-            # Parse Zeek headers to find column indices
-            if line.startswith("#fields"):
-                fields = line.split('\t')
-                # Subtract 1 because data rows don't start with '#fields' prefix
-                ts_idx = fields.index("ts") - 1
-                query_idx = fields.index("query") - 1
-                orig_h_idx = fields.index("id.orig_h") - 1
-                continue
-                
-            if line.startswith("#"):
-                continue
-                
-            # If we don't have fields parsed somehow, skip
-            if ts_idx == -1: continue
-            
-            parts = line.split('\t')
-            if len(parts) <= max(ts_idx, query_idx, orig_h_idx):
-                continue
-            
-            ts = float(parts[ts_idx])
-            query = parts[query_idx]
-            source_ip = parts[orig_h_idx]
-            
-            if query == "-" or query == "(empty)": 
-                continue # Skip empty queries
-            
-            # Send to backend
-            payload = {
-                "timestamp": ts,
-                "query": query,
-                "source_ip": source_ip
-            }
-            
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from zeek import iter_zeek_dns  # noqa: E402
+
+DEFAULT_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "samples", "dns.log")
+
+
+def replay(path: str, api: str, delay: float, api_key: str = "") -> int:
+    headers = {"X-API-Key": api_key} if api_key else {}
+    sent = 0
+    with open(path, encoding="utf-8") as fh, httpx.Client(base_url=api, timeout=30, headers=headers) as client:
+        for rec in iter_zeek_dns(fh):
+            payload = {"query": rec["query"], "source_ip": rec["source_ip"], "qtype": rec["qtype"]}
             try:
-                # We simulate real-time by sleeping slightly between logs
-                print(f"[>] Sending query: {query} from {source_ip}")
-                req = requests.post(API_URL, json=payload)
-                if req.status_code == 200:
-                    result = req.json()
-                    print(f"    --> Risk Level: {result.get('risk_level')}")
-                
-                time.sleep(1.2) # Sleep to mimic streaming
-            except Exception as e:
-                print(f"[!] Error sending log: {str(e)}")
+                resp = client.post("/analyze", json=payload, params={"skip_intel": True})
+                resp.raise_for_status()
+                result = resp.json()
+                print(f"[>] {rec['source_ip']:<15} {rec['query']:<50} -> "
+                      f"{result.get('risk_level')} ({result.get('risk_score')})")
+                sent += 1
+            except httpx.HTTPError as e:
+                print(f"[!] {rec['query']}: {e}", file=sys.stderr)
+            time.sleep(delay)
+    return sent
+
 
 if __name__ == "__main__":
-    import os
-    # Default to the sample log we just created
-    default_log = os.path.join(os.path.dirname(__file__), "..", "data", "sample_dns.log")
-    
-    log_path = sys.argv[1] if len(sys.argv) > 1 else default_log
-    
-    if not os.path.exists(log_path):
-        print(f"Error: File not found: {log_path}")
-        sys.exit(1)
-        
-    ingest_zeek_log(log_path)
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("log", nargs="?", default=DEFAULT_LOG)
+    ap.add_argument("--api", default=os.getenv("DNSENTINEL_API", "http://127.0.0.1:8001"))
+    ap.add_argument("--delay", type=float, default=1.0, help="seconds between queries")
+    a = ap.parse_args()
+    if not os.path.exists(a.log):
+        sys.exit(f"Error: file not found: {a.log}")
+    n = replay(a.log, a.api, a.delay, os.getenv("API_KEY", ""))
+    print(f"[=] Replayed {n} queries from {a.log}")

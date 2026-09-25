@@ -1,6 +1,7 @@
 import { motion } from 'framer-motion';
 import { AlertTriangle, ChevronRight } from 'lucide-react';
 import { SeverityLevel } from './primitives';
+import { formatTime } from '../utils/format';
 
 export const ForensicCard = ({ alert, onClick }) => (
   <motion.div
@@ -13,7 +14,7 @@ export const ForensicCard = ({ alert, onClick }) => (
     `}
   >
      <div className="flex justify-between items-start mb-4">
-        <span className="text-[10px] font-bold font-mono text-slate-600 tracking-widest">{alert.timestamp.split('T')[1].split('.')[0]}</span>
+        <span className="text-[10px] font-bold font-mono text-slate-600 tracking-widest">{formatTime(alert.timestamp)}</span>
         <SeverityLevel level={alert.risk_level} />
      </div>
      <div className="flex items-center gap-4 mb-4">

@@ -1,9 +1,0 @@
-{
-  "name": "com.dnssentinel.host",
-  "description": "DNSentinel Machine Learning Native Host",
-  "path": "dnssentinel_host.py",
-  "type": "stdio",
-  "allowed_origins": [
-    "chrome-extension://kigilhincndgndicakmjijfnjecmaeki/"
-  ]
-}
