@@ -188,6 +188,7 @@ backend runs with `API_KEY` set.
 
 | Method | Endpoint | Description |
 | --- | --- | --- |
+| `GET` | `/` | Service banner with a link to `/docs` |
 | `GET` | `/health` · `/version` | Liveness (503 if the DB is down) and version |
 | `GET` | `/model` | Threshold in use, DL-scorer status, training provenance |
 | `POST` | `/analyze` | Score one query: `{"query", "source_ip", "qtype"}` |
@@ -200,7 +201,7 @@ backend runs with `API_KEY` set.
 | `POST` 🔒 | `/unblock/{entity}` | Revoke an active rule |
 | `GET` | `/blocked` | Active SOAR rules |
 | `GET` | `/alerts/{id}/report` · `/alerts/{id}/pdf` | Incident report (Markdown / PDF) |
-| `GET` | `/export/alerts.csv` · `/export/pdf` | Ledger as CSV (streamed) / PDF audit |
+| `GET` | `/export` · `/export/alerts.csv` · `/export/pdf` | Ledger as CSV text in JSON (dashboard download) / CSV (streamed) / PDF audit |
 
 ```bash
 curl -s -X POST http://127.0.0.1:8001/analyze -H 'content-type: application/json' \
